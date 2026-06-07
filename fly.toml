@@ -1,0 +1,30 @@
+# Fly.io configuration for kindle-digest.
+# Replace the app name and region, then `fly launch --no-deploy` (or `fly deploy`).
+app = "kindle-digest"
+primary_region = "iad"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  PORT = "3000"
+  APP_BASE_URL = "https://kindle-digest.fly.dev"
+  DATABASE_PATH = "/data/kindle-digest.sqlite"
+
+# Persistent volume for SQLite + encrypted OAuth tokens.
+[mounts]
+  source = "kindle_digest_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  # Single-user app + scheduler: keep one machine always running so the daily
+  # delivery fires even when nobody is using the dashboard.
+  auto_stop_machines = false
+  auto_start_machines = true
+  min_machines_running = 1
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "512mb"
