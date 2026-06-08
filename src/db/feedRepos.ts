@@ -163,7 +163,7 @@ export class ArticleRepo {
         url          = excluded.url,
         author       = excluded.author,
         content_html = excluded.content_html,
-        published_at = excluded.published_at
+        published_at = COALESCE(excluded.published_at, articles.published_at)
     `);
     const now = Date.now();
     const tx = this.db.transaction(() => {
@@ -181,8 +181,8 @@ export class ArticleRepo {
                f.title AS feed_title, f.url AS feed_url
         FROM articles a
         JOIN feeds f ON f.id = a.feed_id
-        WHERE f.folder = ? AND a.fetched_at >= ?
-        ORDER BY a.published_at DESC
+        WHERE f.folder = ? AND COALESCE(a.published_at, a.fetched_at) >= ?
+        ORDER BY COALESCE(a.published_at, a.fetched_at) DESC
       `)
       .all(folder, sinceMs) as Record<string, unknown>[];
     return rows.map((r) => {

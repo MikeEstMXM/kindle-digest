@@ -6,6 +6,7 @@ type ParsedItem = {
   link?: string;
   guid?: string;
   isoDate?: string;
+  pubDate?: string;
   author?: string;
   content?: string;
   contentEncoded?: string;
@@ -34,7 +35,12 @@ export async function fetchFeed(
     const guid = item.guid ?? item.link ?? '';
     if (!guid) continue;
     const contentHtml = item.contentEncoded ?? item.content ?? '';
-    const publishedAt = item.isoDate ? new Date(item.isoDate).getTime() : undefined;
+    const tsRaw = item.isoDate
+      ? new Date(item.isoDate).getTime()
+      : item.pubDate
+        ? new Date(item.pubDate).getTime()
+        : NaN;
+    const publishedAt = isFinite(tsRaw) ? tsRaw : undefined;
     items.push({
       guid,
       title: item.title ?? '(untitled)',
