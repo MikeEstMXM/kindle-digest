@@ -65,12 +65,12 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
         const allArticles = await client.getRecentByFolder(folder, Date.now() - windowMs);
         if (allArticles.length === 0) continue;
         const excluded = ctx.selection.excludedIds(date);
-        const cappedIncluded = allArticles.filter((a) => !excluded.has(a.itemId)).slice(0, fs.maxArticles);
-        const cappedExcluded = allArticles.filter((a) => excluded.has(a.itemId));
+        const included = allArticles.filter((a) => !excluded.has(a.itemId));
+        const excluded2 = allArticles.filter((a) => excluded.has(a.itemId));
         view.push({
           folder,
           cadence: fs.cadence,
-          articles: [...cappedIncluded, ...cappedExcluded].map((article) => ({
+          articles: [...included, ...excluded2].map((article) => ({
             article,
             included: !excluded.has(article.itemId),
           })),
@@ -172,8 +172,7 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
     const b = req.body as Record<string, string>;
     const cadence = b.cadence === 'weekly' ? 'weekly' : 'daily';
     const deliveryDay = Math.min(6, Math.max(0, Number(b.deliveryDay ?? 0)));
-    const maxArticles = Math.max(1, Math.min(200, Number(b.maxArticles ?? 20) || 20));
-    ctx.folderSettings.set(folder, cadence, deliveryDay, maxArticles);
+    ctx.folderSettings.set(folder, cadence, deliveryDay);
     return reply.redirect('/feeds');
   });
 

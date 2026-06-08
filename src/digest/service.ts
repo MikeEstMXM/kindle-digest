@@ -34,7 +34,7 @@ export async function sendFolder(ctx: AppContext, folder: string): Promise<Folde
   const client = ctx.readerClient();
   const all = await client.getRecentByFolder(folder, sinceMs);
   const excluded = ctx.selection.excludedIds(isoDate);
-  const included = all.filter((a) => !excluded.has(a.itemId)).slice(0, folderCfg.maxArticles);
+  const included = all.filter((a) => !excluded.has(a.itemId));
 
   if (included.length === 0) {
     return { folder, articleCount: 0, status: 'skipped', message: 'No included articles' };

@@ -8,7 +8,6 @@ export interface FolderSettings {
   folder: string;
   cadence: 'daily' | 'weekly';
   deliveryDay: number; // 0=Sun, 1=Mon, …, 6=Sat (only used when cadence='weekly')
-  maxArticles: number; // cap on articles included per digest (default 20)
 }
 
 export class FolderSettingsRepo {
@@ -18,25 +17,23 @@ export class FolderSettingsRepo {
     const row = this.db
       .prepare('SELECT * FROM folder_settings WHERE folder = ?')
       .get(folder) as Record<string, unknown> | undefined;
-    if (!row) return { folder, cadence: 'daily', deliveryDay: 0, maxArticles: 20 };
+    if (!row) return { folder, cadence: 'daily', deliveryDay: 0 };
     return {
       folder: row.folder as string,
       cadence: row.cadence as 'daily' | 'weekly',
       deliveryDay: row.delivery_day as number,
-      maxArticles: (row.max_articles as number | null) ?? 20,
     };
   }
 
-  set(folder: string, cadence: 'daily' | 'weekly', deliveryDay: number, maxArticles: number): void {
+  set(folder: string, cadence: 'daily' | 'weekly', deliveryDay: number): void {
     this.db
       .prepare(
-        `INSERT INTO folder_settings (folder, cadence, delivery_day, max_articles) VALUES (?, ?, ?, ?)
+        `INSERT INTO folder_settings (folder, cadence, delivery_day) VALUES (?, ?, ?)
          ON CONFLICT(folder) DO UPDATE SET
            cadence = excluded.cadence,
-           delivery_day = excluded.delivery_day,
-           max_articles = excluded.max_articles`,
+           delivery_day = excluded.delivery_day`,
       )
-      .run(folder, cadence, deliveryDay, maxArticles);
+      .run(folder, cadence, deliveryDay);
   }
 
   allAsMap(): Map<string, FolderSettings> {
@@ -50,7 +47,6 @@ export class FolderSettingsRepo {
         folder,
         cadence: r.cadence as 'daily' | 'weekly',
         deliveryDay: r.delivery_day as number,
-        maxArticles: (r.max_articles as number | null) ?? 20,
       });
     }
     return map;

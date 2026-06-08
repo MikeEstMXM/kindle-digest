@@ -182,7 +182,6 @@ export function feedsPage(feeds: Feed[], folderSettingsMap: Map<string, FolderSe
         folder,
         cadence: 'daily',
         deliveryDay: 0,
-        maxArticles: 20,
       };
 
       const renameForm = `<form method="post" action="/feeds/${encodeURIComponent(folder)}/rename" style="display:flex; gap:6px; align-items:center; font-size:13px">
@@ -198,10 +197,6 @@ export function feedsPage(feeds: Feed[], folderSettingsMap: Map<string, FolderSe
         <select name="deliveryDay" class="day-sel" style="${fs.cadence !== 'weekly' ? 'display:none' : ''}">
           ${DOW_NAMES.map((d, i) => `<option value="${i}"${fs.deliveryDay === i ? ' selected' : ''}>${escapeHtml(d)}</option>`).join('')}
         </select>
-        <label style="display:flex; align-items:center; gap:4px; white-space:nowrap">
-          Max articles
-          <input name="maxArticles" type="number" min="1" max="200" value="${fs.maxArticles}" style="width:60px; padding:4px 6px" />
-        </label>
         <button type="submit" class="secondary" style="padding:4px 8px">Save</button>
       </form>`;
 
