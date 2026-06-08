@@ -195,7 +195,7 @@ export async function buildFolderDigest(
     title: `${folder} — ${weekday} ${opts.isoDate}`,
     author: opts.author ?? 'Kindle Digest',
     date: opts.isoDate,
-    series: { name: folder, index: opts.isoDate },
+    series: { name: folder, index: opts.isoDate.replace(/-/g, '') },
     coverXhtml: cover.xhtml,
     tocXhtml,
     articles: epubArticles,

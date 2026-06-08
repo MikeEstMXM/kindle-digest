@@ -8,7 +8,7 @@ function sampleInput(): EpubInput {
     title: 'Technology — Saturday 2026-06-07',
     author: 'Kindle Digest',
     date: '2026-06-07',
-    series: { name: 'Technology', index: '2026-06-07' },
+    series: { name: 'Technology', index: '20260607' },
     coverXhtml: '<?xml version="1.0"?><html><body>cover</body></html>',
     tocXhtml: '<?xml version="1.0"?><html><body>toc</body></html>',
     articles: [
@@ -55,9 +55,9 @@ describe('buildEpub', () => {
     expect(opf).toContain('property="belongs-to-collection"');
     expect(opf).toMatch(/belongs-to-collection"[^>]*>Technology<\/meta>/);
     expect(opf).toContain('property="collection-type">series');
-    expect(opf).toContain('property="group-position">2026-06-07');
+    expect(opf).toContain('property="group-position">20260607');
     expect(opf).toContain('name="calibre:series" content="Technology"');
-    expect(opf).toContain('name="calibre:series_index" content="2026-06-07"');
+    expect(opf).toContain('name="calibre:series_index" content="20260607"');
   });
 
   it('includes all expected files and an itemref spine in order', async () => {

@@ -82,7 +82,7 @@ async function main(): Promise<void> {
     ['fonts embedded', !!zip.file('OEBPS/fonts/PlayfairDisplay-900.woff2')],
     ['qr embedded', !!zip.file('OEBPS/images/qr-1.png')],
     ['series name=folder', opf.includes('>Technology</meta>')],
-    ['series index=ISO date', opf.includes('group-position">2026-06-07')],
+    ['series index=numeric YYYYMMDD', opf.includes('group-position">20260607')],
     ['spine cover first', opf.indexOf('cover-page') < opf.indexOf('art-1')],
     ['diagnostics last', opf.indexOf('art-2') < opf.indexOf('"diagnostics"')],
     ['cover references font', cover.includes("url('fonts/")],

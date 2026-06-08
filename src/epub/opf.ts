@@ -12,9 +12,10 @@ export interface OpfInput {
   title: string;
   language: string;
   author: string;
-  /** ISO date string (also used as the series index). */
+  /** ISO date string. */
   date: string;
   modified: string; // ISO 8601 dcterms:modified
+  /** index must be a numeric string (YYYYMMDD) — Kindle requires numeric group-position for series stacking. */
   series: { name: string; index: string };
   manifest: ManifestItem[];
   /** Ordered list of manifest ids forming the reading order. */
