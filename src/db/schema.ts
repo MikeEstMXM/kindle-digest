@@ -73,7 +73,8 @@ export function migrate(db: DB): void {
     CREATE TABLE IF NOT EXISTS folder_settings (
       folder       TEXT PRIMARY KEY,
       cadence      TEXT NOT NULL DEFAULT 'daily',  -- 'daily' | 'weekly'
-      delivery_day INTEGER NOT NULL DEFAULT 0       -- 0=Sun…6=Sat; only used when cadence='weekly'
+      delivery_day INTEGER NOT NULL DEFAULT 0,      -- 0=Sun…6=Sat; only used when cadence='weekly'
+      max_articles INTEGER NOT NULL DEFAULT 20      -- cap on articles per digest
     );
 
     -- One row per digest run (per folder).
@@ -103,4 +104,12 @@ export function migrate(db: DB): void {
       extract_ms      INTEGER
     );
   `);
+
+  // Idempotent column migration for existing DBs.
+  const cols = (db.prepare('PRAGMA table_info(folder_settings)').all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  if (!cols.includes('max_articles')) {
+    db.exec('ALTER TABLE folder_settings ADD COLUMN max_articles INTEGER NOT NULL DEFAULT 20');
+  }
 }

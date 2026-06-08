@@ -172,6 +172,9 @@ export function feedsPage(feeds: Feed[], folderSettingsMap: Map<string, FolderSe
     byFolder.get(f.folder)!.push(f);
   }
 
+  // Sorted folder list used by datalist and move-feed selects.
+  const knownFolders = [...byFolder.keys()].sort((a, b) => a.localeCompare(b));
+
   const folderSections = [...byFolder.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([folder, folderFeeds]) => {
@@ -179,8 +182,15 @@ export function feedsPage(feeds: Feed[], folderSettingsMap: Map<string, FolderSe
         folder,
         cadence: 'daily',
         deliveryDay: 0,
+        maxArticles: 20,
       };
-      const cadenceForm = `<form method="post" action="/feeds/${encodeURIComponent(folder)}/cadence" style="display:flex; gap:6px; align-items:center; font-size:13px">
+
+      const renameForm = `<form method="post" action="/feeds/${encodeURIComponent(folder)}/rename" style="display:flex; gap:6px; align-items:center; font-size:13px">
+        <input name="newName" type="text" value="${escapeHtml(folder)}" required style="width:auto; padding:4px 6px" />
+        <button type="submit" class="secondary" style="padding:4px 8px">Rename</button>
+      </form>`;
+
+      const cadenceForm = `<form method="post" action="/feeds/${encodeURIComponent(folder)}/cadence" style="display:flex; gap:6px; align-items:center; font-size:13px; flex-wrap:wrap">
         <select name="cadence" onchange="this.form.querySelector('.day-sel').style.display=this.value==='weekly'?'':'none'">
           <option value="daily"${fs.cadence === 'daily' ? ' selected' : ''}>Daily</option>
           <option value="weekly"${fs.cadence === 'weekly' ? ' selected' : ''}>Weekly</option>
@@ -188,8 +198,17 @@ export function feedsPage(feeds: Feed[], folderSettingsMap: Map<string, FolderSe
         <select name="deliveryDay" class="day-sel" style="${fs.cadence !== 'weekly' ? 'display:none' : ''}">
           ${DOW_NAMES.map((d, i) => `<option value="${i}"${fs.deliveryDay === i ? ' selected' : ''}>${escapeHtml(d)}</option>`).join('')}
         </select>
+        <label style="display:flex; align-items:center; gap:4px; white-space:nowrap">
+          Max articles
+          <input name="maxArticles" type="number" min="1" max="200" value="${fs.maxArticles}" style="width:60px; padding:4px 6px" />
+        </label>
         <button type="submit" class="secondary" style="padding:4px 8px">Save</button>
       </form>`;
+
+      const otherFolders = knownFolders.filter((fn) => fn !== folder);
+      const folderOptHtml = otherFolders
+        .map((fn) => `<option value="${escapeHtml(fn)}">${escapeHtml(fn)}</option>`)
+        .join('');
 
       const rows = folderFeeds
         .map((f) => {
@@ -198,12 +217,26 @@ export function feedsPage(feeds: Feed[], folderSettingsMap: Map<string, FolderSe
             : f.lastFetchedAt
               ? `<span class="feed-status">Last fetched ${new Date(f.lastFetchedAt).toLocaleString()}</span>`
               : `<span class="feed-status">Not yet fetched</span>`;
+          const nfId = `new-folder-${f.id}`;
+          const selId = `move-sel-${f.id}`;
+          const moveForm = `<form method="post" action="/feeds/${f.id}/move" style="display:flex; gap:4px; align-items:center">
+              <select id="${selId}" name="folder" style="padding:4px 6px; font-size:13px; width:auto"
+                onchange="var i=document.getElementById('${escapeHtml(nfId)}');i.style.display=this.value==='__new__'?'':'none';if(this.value!=='__new__')i.removeAttribute('required');else i.setAttribute('required','required')">
+                ${folderOptHtml}
+                <option value="__new__">New folder…</option>
+              </select>
+              <input id="${escapeHtml(nfId)}" name="folder" type="text" placeholder="Folder name"
+                style="display:none; padding:4px 6px; font-size:13px; width:120px"
+                oninput="document.getElementById('${selId}').removeAttribute('name')" />
+              <button type="submit" class="secondary" style="padding:4px 8px; font-size:13px">Move</button>
+            </form>`;
           return `<div class="feed-row">
             <div class="meta">
               <div class="feed-title">${escapeHtml(f.title || f.url)}</div>
               <div class="feed-url">${escapeHtml(f.url)}</div>
               ${status}
             </div>
+            ${moveForm}
             <form method="post" action="/feeds/${f.id}/delete" style="display:inline">
               <button class="danger" type="submit" onclick="return confirm('Delete this feed and its articles?')">Delete</button>
             </form>
@@ -211,7 +244,7 @@ export function feedsPage(feeds: Feed[], folderSettingsMap: Map<string, FolderSe
         })
         .join('\n');
       return `<section class="folder">
-        <h2 style="flex-wrap:wrap; gap:8px">${escapeHtml(folder)}${cadenceForm}</h2>
+        <h2 style="flex-wrap:wrap; gap:8px">${escapeHtml(folder)}${renameForm}${cadenceForm}</h2>
         ${rows}
       </section>`;
     })
@@ -219,8 +252,7 @@ export function feedsPage(feeds: Feed[], folderSettingsMap: Map<string, FolderSe
 
   const emptyMsg = feeds.length === 0 ? `<p class="muted">No feeds yet. Add one below.</p>` : '';
 
-  // Collect known folders for the datalist.
-  const knownFolders = [...byFolder.keys()];
+  // knownFolders is declared above, before folderSections.
   const folderOptions = knownFolders.map((f) => `<option value="${escapeHtml(f)}">`).join('');
 
   return `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">

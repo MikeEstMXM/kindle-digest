@@ -62,14 +62,17 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
       for (const folder of folders) {
         const fs = ctx.folderSettings.get(folder);
         const windowMs = fs.cadence === 'weekly' ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-        const articles = await client.getRecentByFolder(folder, Date.now() - windowMs);
-        if (articles.length === 0) continue;
+        const allArticles = await client.getRecentByFolder(folder, Date.now() - windowMs);
+        if (allArticles.length === 0) continue;
+        const excluded = ctx.selection.excludedIds(date);
+        const cappedIncluded = allArticles.filter((a) => !excluded.has(a.itemId)).slice(0, fs.maxArticles);
+        const cappedExcluded = allArticles.filter((a) => excluded.has(a.itemId));
         view.push({
           folder,
           cadence: fs.cadence,
-          articles: articles.map((article) => ({
+          articles: [...cappedIncluded, ...cappedExcluded].map((article) => ({
             article,
-            included: ctx.selection.isIncluded(date, article.itemId),
+            included: !excluded.has(article.itemId),
           })),
         });
       }
@@ -144,12 +147,33 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
     return reply.redirect('/feeds');
   });
 
+  app.post('/feeds/:id/move', async (req, reply) => {
+    const id = Number((req.params as { id: string }).id);
+    const b = req.body as Record<string, string>;
+    const folder = (b.folder ?? '').trim() || 'Uncategorized';
+    ctx.feeds.moveToFolder(id, folder);
+    return reply.redirect('/feeds');
+  });
+
+  app.post('/feeds/:folder/rename', async (req, reply) => {
+    const oldName = decodeURIComponent((req.params as { folder: string }).folder);
+    const b = req.body as Record<string, string>;
+    const newName = (b.newName ?? '').trim();
+    if (newName && newName !== oldName) {
+      ctx.feeds.renameFolder(oldName, newName);
+      ctx.folderSettings.renameFolder(oldName, newName);
+      ctx.selection.renameFolder(oldName, newName);
+    }
+    return reply.redirect('/feeds');
+  });
+
   app.post('/feeds/:folder/cadence', async (req, reply) => {
     const folder = decodeURIComponent((req.params as { folder: string }).folder);
     const b = req.body as Record<string, string>;
     const cadence = b.cadence === 'weekly' ? 'weekly' : 'daily';
     const deliveryDay = Math.min(6, Math.max(0, Number(b.deliveryDay ?? 0)));
-    ctx.folderSettings.set(folder, cadence, deliveryDay);
+    const maxArticles = Math.max(1, Math.min(200, Number(b.maxArticles ?? 20) || 20));
+    ctx.folderSettings.set(folder, cadence, deliveryDay, maxArticles);
     return reply.redirect('/feeds');
   });
 

@@ -124,6 +124,12 @@ export class SelectionRepo {
       .all(digestDate) as { item_id: string }[];
     return new Set(rows.map((r) => r.item_id));
   }
+
+  renameFolder(oldName: string, newName: string): void {
+    this.db
+      .prepare('UPDATE article_selection SET folder = ? WHERE folder = ?')
+      .run(newName, oldName);
+  }
 }
 
 // ─── Run + article logs (diagnostics) ────────────────────────────────────────
