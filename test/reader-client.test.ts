@@ -31,7 +31,7 @@ describe('ReaderClient', () => {
     expect(await client.getFolders()).toEqual(['News', 'Tech']);
   });
 
-  it('getUnreadByFolder returns articles for the matching folder only', async () => {
+  it('getRecentByFolder returns articles for the matching folder only', async () => {
     const techFeed = feedRepo.add('https://tech.example.com/feed', 'Ars Technica', 'Tech');
     const newsFeed = feedRepo.add('https://news.example.com/feed', 'NY Times', 'News');
     articleRepo.upsert(techFeed.id, [
@@ -41,31 +41,24 @@ describe('ReaderClient', () => {
       { guid: 'g2', title: 'News Article', url: 'https://news.example.com/1', contentHtml: '<p>news</p>' },
     ]);
 
-    const techArticles = await client.getUnreadByFolder('Tech');
+    const techArticles = await client.getRecentByFolder('Tech', 0);
     expect(techArticles).toHaveLength(1);
     expect(techArticles[0].title).toBe('Tech Article');
     expect(techArticles[0].feedTitle).toBe('Ars Technica');
 
-    const newsArticles = await client.getUnreadByFolder('News');
+    const newsArticles = await client.getRecentByFolder('News', 0);
     expect(newsArticles).toHaveLength(1);
     expect(newsArticles[0].title).toBe('News Article');
   });
 
-  it('markRead removes articles from unread results', async () => {
+  it('getRecentByFolder excludes articles older than sinceMs', async () => {
     const feed = feedRepo.add('https://example.com/feed', 'Feed', 'Tech');
     articleRepo.upsert(feed.id, [
-      { guid: 'g1', title: 'A', url: 'https://example.com/1', contentHtml: '<p>a</p>' },
-      { guid: 'g2', title: 'B', url: 'https://example.com/2', contentHtml: '<p>b</p>' },
+      { guid: 'g1', title: 'Article', url: 'https://example.com/1', contentHtml: '<p>a</p>' },
     ]);
-
-    const before = await client.getUnreadByFolder('Tech');
-    expect(before).toHaveLength(2);
-
-    await client.markRead([before[0].itemId]);
-
-    const after = await client.getUnreadByFolder('Tech');
-    expect(after).toHaveLength(1);
-    expect(after[0].title).toBe(before[1].title);
+    // sinceMs in the future → nothing qualifies
+    const articles = await client.getRecentByFolder('Tech', Date.now() + 60_000);
+    expect(articles).toHaveLength(0);
   });
 
   it('contentTextLength enables full-text detection', async () => {
@@ -76,7 +69,7 @@ describe('ReaderClient', () => {
       { guid: 'short', title: 'Short', url: 'https://example.com/short', contentHtml: '<p>hi</p>' },
     ]);
 
-    const articles = await client.getUnreadByFolder('Tech');
+    const articles = await client.getRecentByFolder('Tech', 0);
     const long = articles.find((a) => a.title === 'Long')!;
     const short = articles.find((a) => a.title === 'Short')!;
     expect(contentIsFull(long, 1800)).toBe(true);

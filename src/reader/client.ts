@@ -15,11 +15,7 @@ export class ReaderClient {
     return this.feeds.folders();
   }
 
-  async getUnreadByFolder(folder: string): Promise<NormalizedArticle[]> {
-    return this.articles.unreadByFolder(folder);
-  }
-
-  async markRead(itemIds: string[]): Promise<void> {
-    this.articles.markRead(itemIds.map(Number));
+  async getRecentByFolder(folder: string, sinceMs: number): Promise<NormalizedArticle[]> {
+    return this.articles.recentByFolder(folder, sinceMs);
   }
 }

@@ -27,8 +27,12 @@ export async function sendFolder(ctx: AppContext, folder: string): Promise<Folde
   const delivery = assertDeliverable(settings);
   const isoDate = todayIso(settings.timezone);
 
+  const folderCfg = ctx.folderSettings.get(folder);
+  const windowMs = folderCfg.cadence === 'weekly' ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+  const sinceMs = Date.now() - windowMs;
+
   const client = ctx.readerClient();
-  const all = await client.getUnreadByFolder(folder);
+  const all = await client.getRecentByFolder(folder, sinceMs);
   const excluded = ctx.selection.excludedIds(isoDate);
   const included = all.filter((a) => !excluded.has(a.itemId));
 
@@ -57,8 +61,6 @@ export async function sendFolder(ctx: AppContext, folder: string): Promise<Folde
     `${folder} — ${isoDate}`,
     { filename: built.filename, content: built.epub },
   );
-
-  await client.markRead(built.itemIds);
 
   return { folder, articleCount: included.length, status: 'sent' };
 }

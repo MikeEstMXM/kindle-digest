@@ -1,7 +1,7 @@
 import { DateTime } from 'luxon';
 import type { AppContext } from '../app/context.js';
 import { resolveSettings } from '../app/settings.js';
-import { sendAll } from '../digest/service.js';
+import { sendFolder } from '../digest/service.js';
 import { msUntilNextRun, nextRun } from './schedule.js';
 
 /**
@@ -47,14 +47,25 @@ export class DailyScheduler {
   }
 
   private async fire(): Promise<void> {
-    try {
-      const results = await sendAll(this.ctx);
-      const sent = results.filter((r) => r.status === 'sent').length;
-      console.log(`[scheduler] Daily digest run complete: ${sent}/${results.length} folders sent.`);
-    } catch (err) {
-      console.error('[scheduler] Daily digest run failed:', err);
-    } finally {
-      this.arm(); // schedule tomorrow
+    const s = resolveSettings(this.ctx.env, this.ctx.settings);
+    // luxon weekday: 1=Mon…7=Sun → convert to 0=Sun…6=Sat
+    const todayDow = DateTime.now().setZone(s.timezone).weekday % 7;
+
+    const folders = await this.ctx.readerClient().getFolders();
+    let sent = 0, total = 0;
+
+    for (const folder of folders) {
+      const fs = this.ctx.folderSettings.get(folder);
+      if (fs.cadence === 'weekly' && fs.deliveryDay !== todayDow) continue;
+      total++;
+      try {
+        const result = await sendFolder(this.ctx, folder);
+        if (result.status === 'sent') sent++;
+      } catch (err) {
+        console.error(`[scheduler] Failed to send ${folder}:`, err);
+      }
     }
+    console.log(`[scheduler] Digest run: ${sent}/${total} folders sent.`);
+    this.arm(); // schedule next run
   }
 }

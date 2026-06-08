@@ -62,6 +62,6 @@ export async function fetchAllFeeds(feeds: FeedRepo, articles: ArticleRepo): Pro
       console.error(`[rss] Failed to fetch ${feed.url}: ${msg}`);
     }
   }
-  // Prune read articles older than 30 days.
-  articles.pruneRead(Date.now() - 30 * 24 * 60 * 60 * 1000);
+  // Prune articles older than 30 days.
+  articles.pruneOld(Date.now() - 30 * 24 * 60 * 60 * 1000);
 }

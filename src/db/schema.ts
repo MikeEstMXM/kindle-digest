@@ -69,6 +69,13 @@ export function migrate(db: DB): void {
       PRIMARY KEY (digest_date, item_id)
     );
 
+    -- Per-folder delivery cadence.
+    CREATE TABLE IF NOT EXISTS folder_settings (
+      folder       TEXT PRIMARY KEY,
+      cadence      TEXT NOT NULL DEFAULT 'daily',  -- 'daily' | 'weekly'
+      delivery_day INTEGER NOT NULL DEFAULT 0       -- 0=Sun…6=Sat; only used when cadence='weekly'
+    );
+
     -- One row per digest run (per folder).
     CREATE TABLE IF NOT EXISTS run_log (
       id            INTEGER PRIMARY KEY AUTOINCREMENT,

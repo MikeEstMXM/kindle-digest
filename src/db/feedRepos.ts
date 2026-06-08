@@ -2,6 +2,55 @@ import type { DB } from './schema.js';
 import { textLength } from '../util/html.js';
 import type { NormalizedArticle } from '../reader/types.js';
 
+// ─── Folder settings repo ─────────────────────────────────────────────────────
+
+export interface FolderSettings {
+  folder: string;
+  cadence: 'daily' | 'weekly';
+  deliveryDay: number; // 0=Sun, 1=Mon, …, 6=Sat (only used when cadence='weekly')
+}
+
+export class FolderSettingsRepo {
+  constructor(private db: DB) {}
+
+  get(folder: string): FolderSettings {
+    const row = this.db
+      .prepare('SELECT * FROM folder_settings WHERE folder = ?')
+      .get(folder) as Record<string, unknown> | undefined;
+    if (!row) return { folder, cadence: 'daily', deliveryDay: 0 };
+    return {
+      folder: row.folder as string,
+      cadence: row.cadence as 'daily' | 'weekly',
+      deliveryDay: row.delivery_day as number,
+    };
+  }
+
+  set(folder: string, cadence: 'daily' | 'weekly', deliveryDay: number): void {
+    this.db
+      .prepare(
+        `INSERT INTO folder_settings (folder, cadence, delivery_day) VALUES (?, ?, ?)
+         ON CONFLICT(folder) DO UPDATE SET cadence = excluded.cadence, delivery_day = excluded.delivery_day`,
+      )
+      .run(folder, cadence, deliveryDay);
+  }
+
+  allAsMap(): Map<string, FolderSettings> {
+    const rows = this.db
+      .prepare('SELECT * FROM folder_settings')
+      .all() as Record<string, unknown>[];
+    const map = new Map<string, FolderSettings>();
+    for (const r of rows) {
+      const folder = r.folder as string;
+      map.set(folder, {
+        folder,
+        cadence: r.cadence as 'daily' | 'weekly',
+        deliveryDay: r.delivery_day as number,
+      });
+    }
+    return map;
+  }
+}
+
 // ─── Feed repo ────────────────────────────────────────────────────────────────
 
 export interface Feed {
@@ -109,17 +158,17 @@ export class ArticleRepo {
     tx();
   }
 
-  unreadByFolder(folder: string): NormalizedArticle[] {
+  recentByFolder(folder: string, sinceMs: number): NormalizedArticle[] {
     const rows = this.db
       .prepare(`
         SELECT a.id, a.title, a.url, a.author, a.content_html, a.published_at,
                f.title AS feed_title, f.url AS feed_url
         FROM articles a
         JOIN feeds f ON f.id = a.feed_id
-        WHERE f.folder = ? AND a.status = 'unread'
+        WHERE f.folder = ? AND a.fetched_at >= ?
         ORDER BY a.published_at DESC
       `)
-      .all(folder) as Record<string, unknown>[];
+      .all(folder, sinceMs) as Record<string, unknown>[];
     return rows.map((r) => {
       const html = (r.content_html as string) ?? '';
       return {
@@ -136,19 +185,8 @@ export class ArticleRepo {
     });
   }
 
-  markRead(ids: number[]): void {
-    if (ids.length === 0) return;
-    const stmt = this.db.prepare("UPDATE articles SET status = 'read' WHERE id = ?");
-    const tx = this.db.transaction(() => {
-      for (const id of ids) stmt.run(id);
-    });
-    tx();
-  }
-
-  /** Delete read articles older than the given cutoff (epoch ms). Keeps unread. */
-  pruneRead(cutoffMs: number): void {
-    this.db
-      .prepare("DELETE FROM articles WHERE status = 'read' AND fetched_at < ?")
-      .run(cutoffMs);
+  /** Delete articles older than the given cutoff (epoch ms). */
+  pruneOld(cutoffMs: number): void {
+    this.db.prepare('DELETE FROM articles WHERE fetched_at < ?').run(cutoffMs);
   }
 }

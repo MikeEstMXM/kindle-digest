@@ -2,7 +2,7 @@ import { escapeHtml } from '../util/html.js';
 import type { NormalizedArticle } from '../reader/types.js';
 import type { EffectiveSettings } from '../app/settings.js';
 import type { FolderSendResult } from '../digest/service.js';
-import type { Feed } from '../db/feedRepos.js';
+import type { Feed, FolderSettings } from '../db/feedRepos.js';
 
 const STYLE = `
   :root { --fg:#1a1a1a; --muted:#666; --line:#ddd; --accent:#1a6; --bg:#fafafa; }
@@ -110,6 +110,7 @@ export function articleRowFragment(
 
 export interface DashboardFolder {
   folder: string;
+  cadence: 'daily' | 'weekly';
   articles: { article: NormalizedArticle; included: boolean }[];
 }
 
@@ -130,8 +131,9 @@ export function dashboard(date: string, folders: DashboardFolder[]): string {
           ),
         )
         .join('\n');
+      const windowLabel = f.cadence === 'weekly' ? 'last 7 days' : 'last 24h';
       return `<section class="folder">
-      <h2><span>${escapeHtml(f.folder)} <span class="muted">(${includedCount}/${f.articles.length})</span></span>
+      <h2><span>${escapeHtml(f.folder)} <span class="muted">(${includedCount}/${f.articles.length} · ${windowLabel})</span></span>
         <button hx-post="/send/${encodeURIComponent(f.folder)}" hx-target="#send-result" hx-swap="innerHTML">Send now</button>
       </h2>
       ${rows}
@@ -161,7 +163,9 @@ export function sendResults(results: FolderSendResult[]): string {
     .join('\n');
 }
 
-export function feedsPage(feeds: Feed[]): string {
+const DOW_NAMES = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+
+export function feedsPage(feeds: Feed[], folderSettingsMap: Map<string, FolderSettings>): string {
   const byFolder = new Map<string, Feed[]>();
   for (const f of feeds) {
     if (!byFolder.has(f.folder)) byFolder.set(f.folder, []);
@@ -171,6 +175,22 @@ export function feedsPage(feeds: Feed[]): string {
   const folderSections = [...byFolder.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([folder, folderFeeds]) => {
+      const fs: FolderSettings = folderSettingsMap.get(folder) ?? {
+        folder,
+        cadence: 'daily',
+        deliveryDay: 0,
+      };
+      const cadenceForm = `<form method="post" action="/feeds/${encodeURIComponent(folder)}/cadence" style="display:flex; gap:6px; align-items:center; font-size:13px">
+        <select name="cadence" onchange="this.form.querySelector('.day-sel').style.display=this.value==='weekly'?'':'none'">
+          <option value="daily"${fs.cadence === 'daily' ? ' selected' : ''}>Daily</option>
+          <option value="weekly"${fs.cadence === 'weekly' ? ' selected' : ''}>Weekly</option>
+        </select>
+        <select name="deliveryDay" class="day-sel" style="${fs.cadence !== 'weekly' ? 'display:none' : ''}">
+          ${DOW_NAMES.map((d, i) => `<option value="${i}"${fs.deliveryDay === i ? ' selected' : ''}>${escapeHtml(d)}</option>`).join('')}
+        </select>
+        <button type="submit" class="secondary" style="padding:4px 8px">Save</button>
+      </form>`;
+
       const rows = folderFeeds
         .map((f) => {
           const status = f.lastError
@@ -191,7 +211,7 @@ export function feedsPage(feeds: Feed[]): string {
         })
         .join('\n');
       return `<section class="folder">
-        <h2>${escapeHtml(folder)}</h2>
+        <h2 style="flex-wrap:wrap; gap:8px">${escapeHtml(folder)}${cadenceForm}</h2>
         ${rows}
       </section>`;
     })

@@ -13,7 +13,7 @@ COPY package.json package-lock.json* ./
 RUN npm ci
 
 # Build the app.
-COPY tsconfig.json ./
+COPY tsconfig.json tsconfig.build.json ./
 COPY src ./src
 COPY scripts ./scripts
 RUN npm run build

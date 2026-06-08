@@ -60,10 +60,13 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
       const client = ctx.readerClient();
       const view: DashboardFolder[] = [];
       for (const folder of folders) {
-        const articles = await client.getUnreadByFolder(folder);
+        const fs = ctx.folderSettings.get(folder);
+        const windowMs = fs.cadence === 'weekly' ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
+        const articles = await client.getRecentByFolder(folder, Date.now() - windowMs);
         if (articles.length === 0) continue;
         view.push({
           folder,
+          cadence: fs.cadence,
           articles: articles.map((article) => ({
             article,
             included: ctx.selection.isIncluded(date, article.itemId),
@@ -117,7 +120,8 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
   // ─── Feed management ────────────────────────────────────────────────────
   app.get('/feeds', async (_req, reply) => {
     const allFeeds = ctx.feeds.all();
-    return reply.type('text/html').send(layout('Feeds', feedsPage(allFeeds)));
+    const fsMap = ctx.folderSettings.allAsMap();
+    return reply.type('text/html').send(layout('Feeds', feedsPage(allFeeds, fsMap)));
   });
 
   app.post('/feeds/add', async (req, reply) => {
@@ -137,6 +141,15 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
   app.post('/feeds/:id/delete', async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
     ctx.feeds.delete(id);
+    return reply.redirect('/feeds');
+  });
+
+  app.post('/feeds/:folder/cadence', async (req, reply) => {
+    const folder = decodeURIComponent((req.params as { folder: string }).folder);
+    const b = req.body as Record<string, string>;
+    const cadence = b.cadence === 'weekly' ? 'weekly' : 'daily';
+    const deliveryDay = Math.min(6, Math.max(0, Number(b.deliveryDay ?? 0)));
+    ctx.folderSettings.set(folder, cadence, deliveryDay);
     return reply.redirect('/feeds');
   });
 
