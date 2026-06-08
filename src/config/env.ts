@@ -1,21 +1,9 @@
 import 'dotenv/config';
 
-/**
- * Centralised environment configuration. Values here are process-level and
- * static; per-user mutable settings (Kindle email, delivery time, SMTP creds)
- * live in the database and are read via the settings repository.
- */
 export interface Env {
   port: number;
   appBaseUrl: string;
   databasePath: string;
-  credentialEncryptionKey: string;
-  inoreader: {
-    clientId: string;
-    clientSecret: string;
-    /** Derived: `${appBaseUrl}/auth/callback`. */
-    redirectUri: string;
-  };
   smtp: {
     host?: string;
     port: number;
@@ -32,27 +20,14 @@ export interface Env {
   fulltextMinChars: number;
 }
 
-function req(name: string): string {
-  const v = process.env[name];
-  if (!v) throw new Error(`Missing required environment variable: ${name}`);
-  return v;
-}
-
 let cached: Env | undefined;
 
 export function loadEnv(): Env {
   if (cached) return cached;
-  const appBaseUrl = (process.env.APP_BASE_URL ?? 'http://localhost:3000').replace(/\/$/, '');
   cached = {
     port: Number(process.env.PORT ?? 3000),
-    appBaseUrl,
+    appBaseUrl: (process.env.APP_BASE_URL ?? 'http://localhost:3000').replace(/\/$/, ''),
     databasePath: process.env.DATABASE_PATH ?? './data/kindle-digest.sqlite',
-    credentialEncryptionKey: req('CREDENTIAL_ENCRYPTION_KEY'),
-    inoreader: {
-      clientId: process.env.INOREADER_CLIENT_ID ?? '',
-      clientSecret: process.env.INOREADER_CLIENT_SECRET ?? '',
-      redirectUri: `${appBaseUrl}/auth/callback`,
-    },
     smtp: {
       host: process.env.SMTP_HOST,
       port: Number(process.env.SMTP_PORT ?? 587),

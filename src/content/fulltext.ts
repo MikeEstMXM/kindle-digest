@@ -1,6 +1,6 @@
-import type { NormalizedArticle } from '../inoreader/types.js';
+import type { NormalizedArticle } from '../reader/types.js';
 
-export type ContentSource = 'inoreader' | 'readability';
+export type ContentSource = 'feed' | 'readability';
 export type FailureReason = 'paywall' | 'js-rendered' | 'http-error' | null;
 
 export interface ResolvedContent {
@@ -12,14 +12,14 @@ export interface ResolvedContent {
 }
 
 /**
- * Decide whether Inoreader's own content is "full enough" to use directly.
+ * Decide whether the reader's own content is "full enough" to use directly.
  * Heuristic: the extracted visible-text length must meet a threshold. When it
  * does, we avoid an extra page fetch; otherwise the caller triggers the
- * Readability fallback. This is the single decision point the tests assert on.
+ * Readability fallback.
  */
-export function inoreaderContentIsFull(
-  article: Pick<NormalizedArticle, 'inoreaderTextLength'>,
+export function contentIsFull(
+  article: Pick<NormalizedArticle, 'contentTextLength'>,
   minChars: number,
 ): boolean {
-  return article.inoreaderTextLength >= minChars;
+  return article.contentTextLength >= minChars;
 }

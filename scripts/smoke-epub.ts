@@ -1,6 +1,6 @@
 /**
  * End-to-end smoke: build a real EPUB through the orchestrator with mocked
- * network (no Inoreader/SMTP), embedding the downloaded fonts, then validate
+ * network (no Miniflux/SMTP), embedding the downloaded fonts, then validate
  * the package structure. Writes out/sample.epub for manual inspection.
  *
  * Run: npx tsx scripts/smoke-epub.ts
@@ -12,7 +12,7 @@ import JSZip from 'jszip';
 import sharp from 'sharp';
 import { buildFolderDigest } from '../src/digest/orchestrator.js';
 import { loadFontBuffers } from '../src/cover/fontLoader.js';
-import type { NormalizedArticle } from '../src/inoreader/types.js';
+import type { NormalizedArticle } from '../src/reader/types.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const FONTS = join(__dirname, '..', 'assets', 'fonts');
@@ -25,16 +25,16 @@ const articles: NormalizedArticle[] = [
     feedTitle: 'Ars Technica',
     author: 'Jane Doe',
     publishedMs: Date.parse('2026-06-06T12:00:00Z'),
-    inoreaderHtml: `<p><img src="https://img.example.com/hero.jpg"/>${'<p>Full content paragraph that is clearly long enough to be treated as complete by the detector. </p>'.repeat(40)}`,
-    inoreaderTextLength: 4000,
+    contentHtml: `<p><img src="https://img.example.com/hero.jpg"/>${'<p>Full content paragraph that is clearly long enough to be treated as complete by the detector. </p>'.repeat(40)}`,
+    contentTextLength: 4000,
   },
   {
     itemId: 'i2',
     title: 'Short Item Needing Fallback',
     url: 'https://example.com/short',
     feedTitle: 'The Verge',
-    inoreaderHtml: '<p>too short</p>',
-    inoreaderTextLength: 8,
+    contentHtml: '<p>too short</p>',
+    contentTextLength: 8,
   },
 ];
 
@@ -86,7 +86,7 @@ async function main(): Promise<void> {
     ['spine cover first', opf.indexOf('cover-page') < opf.indexOf('art-1')],
     ['diagnostics last', opf.indexOf('art-2') < opf.indexOf('"diagnostics"')],
     ['cover references font', cover.includes("url('fonts/")],
-    ['diag shows Inoreader source', diag.includes('Inoreader API')],
+    ['diag shows RSS feed source', diag.includes('RSS feed')],
     ['diag shows Readability fallback', diag.includes('Readability.js fallback')],
   ];
 

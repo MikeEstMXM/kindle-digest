@@ -18,13 +18,41 @@ export function openDb(path: string): DB {
 
 export function migrate(db: DB): void {
   db.exec(`
+    -- RSS feeds managed by the app.
+    CREATE TABLE IF NOT EXISTS feeds (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      url             TEXT NOT NULL UNIQUE,
+      title           TEXT NOT NULL DEFAULT '',
+      folder          TEXT NOT NULL DEFAULT 'Uncategorized',
+      last_fetched_at INTEGER,
+      last_error      TEXT,
+      created_at      INTEGER NOT NULL
+    );
+
+    -- Articles fetched from feeds.
+    CREATE TABLE IF NOT EXISTS articles (
+      id           INTEGER PRIMARY KEY AUTOINCREMENT,
+      feed_id      INTEGER NOT NULL REFERENCES feeds(id) ON DELETE CASCADE,
+      guid         TEXT NOT NULL,
+      title        TEXT NOT NULL DEFAULT '',
+      url          TEXT NOT NULL DEFAULT '',
+      author       TEXT,
+      content_html TEXT NOT NULL DEFAULT '',
+      published_at INTEGER,
+      fetched_at   INTEGER NOT NULL,
+      status       TEXT NOT NULL DEFAULT 'unread',
+      UNIQUE(feed_id, guid)
+    );
+
+    CREATE INDEX IF NOT EXISTS articles_feed_status ON articles(feed_id, status);
+
     CREATE TABLE IF NOT EXISTS settings (
       key   TEXT PRIMARY KEY,
       value TEXT
     );
 
     CREATE TABLE IF NOT EXISTS oauth_tokens (
-      provider      TEXT PRIMARY KEY,        -- 'inoreader'
+      provider      TEXT PRIMARY KEY,
       access_token  TEXT NOT NULL,           -- AES-256-GCM encrypted
       refresh_token TEXT,                    -- AES-256-GCM encrypted
       expires_at    INTEGER NOT NULL,        -- epoch ms
@@ -34,7 +62,7 @@ export function migrate(db: DB): void {
     -- Per-day curation: whether an article is included in that date's digest.
     CREATE TABLE IF NOT EXISTS article_selection (
       digest_date TEXT NOT NULL,             -- ISO date, e.g. 2026-06-07
-      item_id     TEXT NOT NULL,             -- Inoreader item id
+      item_id     TEXT NOT NULL,
       folder      TEXT NOT NULL,             -- top-level folder name
       included    INTEGER NOT NULL DEFAULT 1,
       updated_at  INTEGER NOT NULL,
@@ -63,7 +91,7 @@ export function migrate(db: DB): void {
       item_id         TEXT NOT NULL,
       title           TEXT,
       url             TEXT,
-      content_source  TEXT,   -- 'inoreader' | 'readability'
+      content_source  TEXT,   -- 'feed' | 'readability'
       failure_reason  TEXT,   -- 'paywall' | 'js-rendered' | 'http-error' | null
       extract_ms      INTEGER
     );

@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { groupIncludedByFolder, feedCounts } from '../src/digest/grouping.js';
-import type { NormalizedArticle } from '../src/inoreader/types.js';
+import type { NormalizedArticle } from '../src/reader/types.js';
 
 function art(over: Partial<NormalizedArticle> & { folder: string }): NormalizedArticle & {
   folder: string;
@@ -10,8 +10,8 @@ function art(over: Partial<NormalizedArticle> & { folder: string }): NormalizedA
     title: over.title ?? 't',
     url: 'https://e/x',
     feedTitle: over.feedTitle ?? 'Feed',
-    inoreaderHtml: '',
-    inoreaderTextLength: 0,
+    contentHtml: '',
+    contentTextLength: 0,
     ...over,
   };
 }

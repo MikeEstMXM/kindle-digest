@@ -1,6 +1,6 @@
 /**
  * Lightweight HTML → plain-text length estimate. Intentionally dependency-free
- * (no jsdom) so it is cheap to run over every Inoreader item during full-text
+ * (no jsdom) so it is cheap to run over every article during full-text
  * detection. Not a full sanitiser — just for measuring visible text volume.
  */
 export function htmlToText(html: string): string {

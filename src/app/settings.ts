@@ -7,7 +7,6 @@ export interface EffectiveSettings {
   deliveryTime: string;
   timezone: string;
   smtp: Partial<SmtpConfig>;
-  inoreaderConfigured: boolean;
 }
 
 /** Merge env defaults with DB-stored settings (DB wins when present). */
@@ -25,7 +24,6 @@ export function resolveSettings(env: Env, repo: SettingsRepo): EffectiveSettings
       pass: s.smtpPass ?? env.smtp.pass,
       from: s.smtpFrom ?? env.smtp.from,
     },
-    inoreaderConfigured: Boolean(env.inoreader.clientId && env.inoreader.clientSecret),
   };
 }
 

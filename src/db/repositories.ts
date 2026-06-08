@@ -132,7 +132,7 @@ export interface ArticleLogEntry {
   itemId: string;
   title?: string;
   url?: string;
-  contentSource?: 'inoreader' | 'readability';
+  contentSource?: 'feed' | 'readability';
   failureReason?: 'paywall' | 'js-rendered' | 'http-error' | null;
   extractMs?: number;
 }
@@ -184,7 +184,7 @@ export class RunLogRepo {
       itemId: r.item_id as string,
       title: (r.title as string) ?? undefined,
       url: (r.url as string) ?? undefined,
-      contentSource: (r.content_source as 'inoreader' | 'readability') ?? undefined,
+      contentSource: (r.content_source as 'feed' | 'readability') ?? undefined,
       failureReason: (r.failure_reason as ArticleLogEntry['failureReason']) ?? null,
       extractMs: (r.extract_ms as number) ?? undefined,
     }));

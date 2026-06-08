@@ -1,19 +1,17 @@
-# 📚 kindle-digest
+# kindle-digest
 
-A single-user web app that turns your unread [Inoreader](https://www.inoreader.com)
-articles into **daily Kindle digests**. It pulls unread articles grouped by
-top-level Inoreader folder, lets you curate which ones go into today's digest,
-and delivers **one EPUB per folder** — with a designed cover, full article
-text, a per-article QR code to the source, and a diagnostics page — straight to
-your Kindle, on a schedule and on demand.
+A single-user web app that turns your RSS feeds into **daily Kindle digests**.
+It manages its own feed list, lets you curate which articles go into today's
+digest, and delivers **one EPUB per folder** — with a designed cover, full
+article text, a per-article QR code back to the source, and a diagnostics page
+— straight to your Kindle, on a schedule and on demand.
 
-Inoreader is the source of truth for feeds and read state. Articles you send are
-marked **read in Inoreader**, so the change propagates to Reeder and everywhere
-else automatically.
+No external RSS reader required. All feeds and read state live in a local
+SQLite database on your Fly.io volume.
 
 ---
 
-## ⚠️ Required setup: whitelist your sender on Amazon
+## Required setup: whitelist your sender on Amazon
 
 **Send to Kindle silently drops email from unknown senders.** Before anything
 will reach your device you MUST add your sending address to Amazon's approved
@@ -23,10 +21,9 @@ list:
    Personal Document Settings**.
 2. Under **Approved Personal Document E-mail List**, click **Add a new approved
    e-mail address**.
-3. Add the exact address you configure as `SMTP_FROM` (e.g.
-   `digest@yourdomain.com`).
+3. Add the exact address you configure as `SMTP_FROM`.
 4. Find your Kindle's **Send-to-Kindle e-mail** (`…@kindle.com`) on the same
-   page — that is the `KINDLE_EMAIL` value.
+   page — that goes in the Settings page as your Kindle email.
 
 If digests never arrive, this whitelist step is the first thing to check.
 
@@ -35,20 +32,20 @@ If digests never arrive, this whitelist step is the first thing to check.
 ## How it works
 
 ```
-Inoreader API ──► unread articles grouped by top-level folder
+RSS/Atom feeds (fetched hourly) ──► articles grouped by folder
                       │
                   Dashboard (curate: include / exclude per article)
                       │
         ┌─────────────┴───────────────┐
    Full-text fetch                Cover + QR + diagnostics
-   (Inoreader content if full,    (grayscale image, embedded fonts,
-    else Readability.js fallback)  series metadata)
+   (feed content if full enough,  (grayscale image, embedded fonts,
+    else Readability.js fallback)  series metadata for Kindle collections)
         └─────────────┬───────────────┘
                  One EPUB per folder
                       │
             SMTP ──► your @kindle.com address
                       │
-            Mark articles read in Inoreader
+                Mark articles read in local DB
 ```
 
 - **Full text is always included.** If extraction fails (paywall, JS-rendered,
@@ -57,38 +54,36 @@ Inoreader API ──► unread articles grouped by top-level folder
 - **Series metadata** sets series name = folder, series index = ISO date, so
   Kindle groups each folder's digests into a browsable collection.
 - **Covers** use a four-template design system assigned by a stable hash of the
-  folder name (it never changes day-to-day). Fonts are embedded in the EPUB.
+  folder name (never changes day-to-day). Fonts are embedded in the EPUB.
 
 ## Tech stack
 
-Node.js 22 + TypeScript · Fastify + HTMX · better-sqlite3 · @mozilla/readability
-+ jsdom · sharp · qrcode · custom EPUB writer (jszip) · luxon · nodemailer.
-Hosting: Fly.io. See [`CLAUDE.md`](./CLAUDE.md) for full rationale.
+Node.js 22 + TypeScript · Fastify + HTMX · better-sqlite3 · rss-parser ·
+@mozilla/readability + jsdom · sharp · qrcode · custom EPUB writer (jszip) ·
+luxon · nodemailer. Hosting: Fly.io. See [`CLAUDE.md`](./CLAUDE.md) for full
+rationale.
 
-## Prerequisites
-
-- Node.js ≥ 22
-- An Inoreader account and a **registered OAuth app**
-  (https://www.inoreader.com/developers/ → *register a new application*).
-  Set the redirect URI to exactly `${APP_BASE_URL}/auth/callback`.
-- An SMTP account whose **from address is whitelisted on Amazon** (see above).
+---
 
 ## Quick start (local)
 
 ```bash
 git clone <repo> && cd kindle-digest
 npm install
-npm run fetch-fonts            # downloads + embeds the cover fonts (woff2)
+npm run fetch-fonts      # downloads + embeds the cover fonts (woff2)
 
-cp .env.example .env           # then fill it in (see below)
-npm run dev                    # http://localhost:3000
+cp .env.example .env     # fill in SMTP vars (all others are optional)
+npm run dev              # http://localhost:3000
 ```
 
 Then in the browser:
 
-1. Open **Settings**, enter your Kindle email, delivery time, timezone, and
+1. Go to **Feeds** and add RSS/Atom feed URLs, or upload an **OPML file**
+   exported from your existing feed reader (Inoreader: *Preferences →
+   Subscriptions → Export OPML*). Feeds are grouped by the folder names you
+   assign (or from the OPML structure).
+2. Open **Settings**, enter your Kindle email, delivery time, timezone, and
    SMTP details. Save.
-2. Click **Connect Inoreader** and authorize.
 3. On the **Dashboard**, toggle articles include/exclude, then **Send now** for
    a folder or **Send all**. The scheduler also delivers daily at your chosen
    time.
@@ -99,17 +94,16 @@ Copy `.env.example` to `.env` and set:
 
 | Variable | Required | Notes |
 |----------|----------|-------|
-| `CREDENTIAL_ENCRYPTION_KEY` | ✅ | 32 bytes for encrypting OAuth tokens at rest. Generate: `openssl rand -hex 32`. |
-| `INOREADER_CLIENT_ID` / `INOREADER_CLIENT_SECRET` | ✅ | From your Inoreader developer app. |
-| `APP_BASE_URL` | ✅ | Public base URL; the OAuth redirect is `${APP_BASE_URL}/auth/callback`. |
-| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | ✅ | `SMTP_FROM` must be Amazon-whitelisted. Can also be set in the Settings UI. |
-| `KINDLE_EMAIL` | ✅ | Your `…@kindle.com` address (or set in Settings). |
-| `DELIVERY_TIME` / `TIMEZONE` | – | Daily send time (HH:mm, 24h) and IANA timezone. |
-| `DATABASE_PATH` | – | SQLite path. On Fly this lives on the mounted volume. |
-| `FULLTEXT_MIN_CHARS` | – | Min chars before Inoreader content is treated as "full" (else Readability). |
+| `APP_BASE_URL` | – | Public base URL (default `http://localhost:3000`). Set to your Fly URL in production. |
+| `SMTP_HOST` / `SMTP_PORT` / `SMTP_SECURE` / `SMTP_USER` / `SMTP_PASS` / `SMTP_FROM` | – | `SMTP_FROM` must be Amazon-whitelisted. Can also be set in the Settings UI after launch. |
+| `KINDLE_EMAIL` | – | Your `…@kindle.com` address. Can also be set in the Settings UI. |
+| `DELIVERY_TIME` / `TIMEZONE` | – | Daily send time (HH:mm, 24h) and IANA timezone. Defaults: `06:30` / `America/New_York`. |
+| `DATABASE_PATH` | – | SQLite path. On Fly this lives on the mounted volume (`/data/kindle-digest.sqlite`). |
+| `FULLTEXT_MIN_CHARS` | – | Min visible-text chars before feed content is treated as "full" (else Readability fallback). Default `1800`. |
 
-Credentials are never hardcoded: OAuth tokens are stored **encrypted**
-(AES-256-GCM) in SQLite; SMTP secrets live in env or the local DB.
+No OAuth tokens or encryption keys are required.
+
+---
 
 ## Commands
 
@@ -122,31 +116,49 @@ Credentials are never hardcoded: OAuth tokens are stored **encrypted**
 | `npm run build` && `npm start` | Compile and run production build. |
 | `npx tsx scripts/smoke-epub.ts` | Build a sample EPUB to `out/sample.epub` for inspection. |
 
+---
+
 ## Deploy to Fly.io
 
 ```bash
-fly launch --no-deploy            # adjust app name/region in fly.toml
-fly volumes create kindle_digest_data --size 1
-fly secrets set \
-  CREDENTIAL_ENCRYPTION_KEY=$(openssl rand -hex 32) \
-  INOREADER_CLIENT_ID=... INOREADER_CLIENT_SECRET=... \
-  SMTP_HOST=... SMTP_USER=... SMTP_PASS=... SMTP_FROM=... \
-  KINDLE_EMAIL=...@kindle.com
+# 1. Install flyctl and log in
+fly auth login
+
+# 2. Create app + persistent volume
+fly apps create kindle-digest          # pick a globally-unique name
+fly volumes create kindle_digest_data --size 1 --region iad --app kindle-digest
+
+# 3. Set SMTP secrets (or configure via the Settings page after deploy)
+fly secrets set --app kindle-digest \
+  SMTP_HOST=smtp.gmail.com \
+  SMTP_PORT=587 \
+  SMTP_USER=you@gmail.com \
+  SMTP_PASS=your-app-password \
+  SMTP_FROM=you@gmail.com
+
+# 4. Deploy
 fly deploy
 ```
 
-Set `APP_BASE_URL` (in `fly.toml` `[env]`) to your real Fly URL and make sure
-that `${APP_BASE_URL}/auth/callback` is registered as the redirect URI in your
-Inoreader app. One always-on machine runs the daily scheduler; SQLite + tokens
-persist on the volume.
+After deploy, open your app URL and go to **Feeds** to add your first feeds
+or import an OPML file.
 
-## Known limitations (v1)
+**Useful commands:**
 
-- In-article images are dropped from the body to keep EPUBs self-contained and
-  small (the cover image **is** embedded, grayscaled). Use the per-article QR to
-  open the original for full fidelity.
-- "Full content" from Inoreader is detected by a text-length heuristic
-  (`FULLTEXT_MIN_CHARS`); tune it to your feeds.
-- Kindle series grouping relies on EPUB3 `belongs-to-collection` (the ISO date
-  is used as the group position); a calibre series fallback is also written.
-  Verify grouping in Kindle Previewer if needed.
+```bash
+fly logs --app kindle-digest          # tail live logs
+fly ssh console --app kindle-digest   # shell into the container
+fly deploy                            # redeploy after code changes
+```
+
+---
+
+## Known limitations
+
+- In-article images are not embedded in the EPUB body (the cover image **is**
+  embedded and grayscaled). Use the per-article QR code to open the original.
+- "Full content" detection is a text-length heuristic (`FULLTEXT_MIN_CHARS`).
+  Tune it to your feeds — some feeds include full articles via `content:encoded`,
+  others only summaries.
+- Kindle series grouping relies on EPUB3 `belongs-to-collection` (ISO date as
+  group position) plus a calibre series fallback. Verify in Kindle Previewer.

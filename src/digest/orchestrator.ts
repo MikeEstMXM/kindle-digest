@@ -1,7 +1,7 @@
 import { DateTime } from 'luxon';
-import type { NormalizedArticle } from '../inoreader/types.js';
+import type { NormalizedArticle } from '../reader/types.js';
 import type { RunLogRepo } from '../db/repositories.js';
-import { inoreaderContentIsFull, type ContentSource, type FailureReason } from '../content/fulltext.js';
+import { contentIsFull, type ContentSource, type FailureReason } from '../content/fulltext.js';
 import { extractFullText, type PageFetcher } from '../content/extract.js';
 import { sanitizeArticleHtml } from '../content/sanitize.js';
 import { generateQrPng } from '../content/qr.js';
@@ -49,12 +49,12 @@ async function resolveContent(
   fetchPage?: PageFetcher,
 ): Promise<ResolvedArticle> {
   const started = Date.now();
-  if (inoreaderContentIsFull(article, minChars)) {
+  if (contentIsFull(article, minChars)) {
     return {
       article,
-      source: 'inoreader',
+      source: 'feed',
       failureReason: null,
-      bodyXhtml: sanitizeArticleHtml(article.inoreaderHtml),
+      bodyXhtml: sanitizeArticleHtml(article.contentHtml),
       extractMs: Date.now() - started,
     };
   }
@@ -75,7 +75,7 @@ async function buildCoverImage(
   fetchImage: typeof fetch = fetch,
 ): Promise<EpubBinary | undefined> {
   const candidates = articles
-    .map((a) => findCoverImageUrl(a.inoreaderHtml))
+    .map((a) => findCoverImageUrl(a.contentHtml))
     .filter((u): u is string => Boolean(u));
   if (candidates.length === 0) return undefined;
   const pick = candidates[Math.floor(Math.random() * candidates.length)];

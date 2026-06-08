@@ -1,18 +1,20 @@
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
-import { randomUUID } from 'node:crypto';
 import Fastify, { type FastifyInstance } from 'fastify';
 import formbody from '@fastify/formbody';
+import multipart from '@fastify/multipart';
 import type { AppContext } from '../app/context.js';
 import { resolveSettings } from '../app/settings.js';
-import { buildAuthorizeUrl, exchangeCode } from '../inoreader/oauth.js';
 import { sendAll, sendFolder, todayIso } from '../digest/service.js';
+import { fetchAllFeeds, fetchFeed } from '../rss/fetcher.js';
+import { parseOpml } from '../rss/opml.js';
 import type { DailyScheduler } from '../scheduler/runner.js';
 import {
   layout,
   dashboard,
-  connectPrompt,
+  noFeedsPrompt,
   settingsPage,
+  feedsPage,
   sendResults,
   articleRowFragment,
   type DashboardFolder,
@@ -38,6 +40,7 @@ const COMMON_TIMEZONES = [
 export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): FastifyInstance {
   const app = Fastify({ logger: true });
   app.register(formbody);
+  app.register(multipart, { limits: { fileSize: 2 * 1024 * 1024 } }); // 2 MB
 
   app.get('/vendor/htmx.min.js', async (_req, reply) => {
     reply.header('Content-Type', 'application/javascript').send(HTMX_JS);
@@ -47,15 +50,14 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
   app.get('/', async (_req, reply) => {
     const settings = resolveSettings(ctx.env, ctx.settings);
     const date = todayIso(settings.timezone);
-    const connected = Boolean(ctx.tokens.load('inoreader'));
-    if (!connected) {
+    const folders = ctx.feeds.folders();
+    if (folders.length === 0) {
       return reply
         .type('text/html')
-        .send(layout('Dashboard', connectPrompt('Authorize the app to read your feeds.'), false));
+        .send(layout('Dashboard', noFeedsPrompt()));
     }
     try {
-      const client = ctx.inoreaderClient();
-      const folders = await client.getFolders();
+      const client = ctx.readerClient();
       const view: DashboardFolder[] = [];
       for (const folder of folders) {
         const articles = await client.getUnreadByFolder(folder);
@@ -68,10 +70,10 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
           })),
         });
       }
-      return reply.type('text/html').send(layout('Dashboard', dashboard(date, view), true));
+      return reply.type('text/html').send(layout('Dashboard', dashboard(date, view)));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return reply.type('text/html').send(layout('Dashboard', connectPrompt(msg), true));
+      return reply.type('text/html').send(layout('Dashboard', noFeedsPrompt(msg)));
     }
   });
 
@@ -112,11 +114,60 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
     return reply.type('text/html').send(sendResults(results));
   });
 
+  // ─── Feed management ────────────────────────────────────────────────────
+  app.get('/feeds', async (_req, reply) => {
+    const allFeeds = ctx.feeds.all();
+    return reply.type('text/html').send(layout('Feeds', feedsPage(allFeeds)));
+  });
+
+  app.post('/feeds/add', async (req, reply) => {
+    const b = req.body as Record<string, string>;
+    const url = (b.url ?? '').trim();
+    const folder = (b.folder ?? '').trim() || 'Uncategorized';
+    if (!url) return reply.redirect('/feeds');
+    const feed = ctx.feeds.add(url, url, folder); // title filled in after first fetch
+    try {
+      await fetchFeed(feed.id, feed.url, ctx.articles, ctx.feeds);
+    } catch {
+      // Non-fatal: feed saved, will retry on next refresh cycle.
+    }
+    return reply.redirect('/feeds');
+  });
+
+  app.post('/feeds/:id/delete', async (req, reply) => {
+    const id = Number((req.params as { id: string }).id);
+    ctx.feeds.delete(id);
+    return reply.redirect('/feeds');
+  });
+
+  app.post('/feeds/refresh', async (_req, reply) => {
+    void fetchAllFeeds(ctx.feeds, ctx.articles); // fire and forget
+    return reply.redirect('/feeds');
+  });
+
+  app.post('/feeds/import', async (req, reply) => {
+    const file = await req.file();
+    if (!file) return reply.redirect('/feeds');
+    const buf = await file.toBuffer();
+    const feeds = parseOpml(buf.toString('utf-8'));
+    let added = 0;
+    for (const f of feeds) {
+      try {
+        ctx.feeds.add(f.url, f.title, f.folder);
+        added += 1;
+      } catch {
+        // duplicate URL — skip
+      }
+    }
+    if (added > 0) void fetchAllFeeds(ctx.feeds, ctx.articles);
+    return reply.redirect('/feeds');
+  });
+
   // ─── Settings ───────────────────────────────────────────────────────────
   app.get('/settings', async (_req, reply) => {
     const s = resolveSettings(ctx.env, ctx.settings);
     const tzs = [...new Set([s.timezone, ...COMMON_TIMEZONES])];
-    return reply.type('text/html').send(layout('Settings', settingsPage(s, tzs), true));
+    return reply.type('text/html').send(layout('Settings', settingsPage(s, tzs)));
   });
 
   app.post('/settings', async (req, reply) => {
@@ -132,29 +183,10 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
       'smtpFrom',
     ];
     for (const k of keys) if (b[k] !== undefined) ctx.settings.set(k, b[k]);
-    // Only overwrite the password when a new value is supplied.
     if (b.smtpPass) ctx.settings.set('smtpPass', b.smtpPass);
     scheduler?.stop();
     scheduler?.start();
     return reply.redirect('/settings');
-  });
-
-  // ─── Inoreader OAuth ────────────────────────────────────────────────────
-  app.get('/auth/inoreader', async (_req, reply) => {
-    const state = randomUUID();
-    ctx.settings.set('oauth_state', state);
-    return reply.redirect(buildAuthorizeUrl(ctx.env.inoreader, state));
-  });
-
-  app.get('/auth/callback', async (req, reply) => {
-    const q = req.query as { code?: string; state?: string; error?: string };
-    if (q.error) return reply.type('text/html').send(layout('Error', `OAuth error: ${q.error}`, false));
-    if (!q.code || q.state !== ctx.settings.get('oauth_state')) {
-      return reply.type('text/html').send(layout('Error', 'Invalid OAuth state or missing code.', false));
-    }
-    const tokens = await exchangeCode(ctx.env.inoreader, q.code);
-    ctx.tokens.save('inoreader', tokens);
-    return reply.redirect('/');
   });
 
   return app;

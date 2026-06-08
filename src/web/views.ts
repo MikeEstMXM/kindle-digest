@@ -1,7 +1,8 @@
 import { escapeHtml } from '../util/html.js';
-import type { NormalizedArticle } from '../inoreader/types.js';
+import type { NormalizedArticle } from '../reader/types.js';
 import type { EffectiveSettings } from '../app/settings.js';
 import type { FolderSendResult } from '../digest/service.js';
+import type { Feed } from '../db/feedRepos.js';
 
 const STYLE = `
   :root { --fg:#1a1a1a; --muted:#666; --line:#ddd; --accent:#1a6; --bg:#fafafa; }
@@ -19,8 +20,16 @@ const STYLE = `
   .article .title { font-weight:600; }
   .article .sub { color:var(--muted); font-size:13px; margin-top:2px; }
   .article.excluded { opacity:0.45; }
+  .feed-row { display:flex; gap:12px; align-items:center; padding:10px 16px; border-bottom:1px solid #f0f0f0; }
+  .feed-row:last-child { border-bottom:0; }
+  .feed-row .meta { flex:1; }
+  .feed-row .feed-title { font-weight:600; }
+  .feed-row .feed-url { color:var(--muted); font-size:12px; word-break:break-all; }
+  .feed-row .feed-status { font-size:12px; color:var(--muted); }
+  .feed-row .feed-status.error { color:#c00; }
   button { font:inherit; padding:6px 12px; border:1px solid #1a1a1a; background:#1a1a1a; color:#fff; border-radius:6px; cursor:pointer; }
   button.secondary { background:#fff; color:#1a1a1a; }
+  button.danger { border-color:#c00; background:#c00; color:#fff; }
   .toggle { padding:4px 10px; font-size:13px; }
   label.field { display:block; margin:12px 0; }
   label.field span { display:block; font-weight:600; margin-bottom:4px; }
@@ -29,9 +38,11 @@ const STYLE = `
   .result { padding:10px 16px; border-radius:6px; margin:8px 0; }
   .result.sent { background:#e8f7ee; } .result.error { background:#fde8e8; } .result.skipped { background:#eee; }
   .muted { color:var(--muted); }
+  .row { display:flex; gap:8px; align-items:flex-end; }
+  .row input { flex:1; }
 `;
 
-export function layout(title: string, body: string, navConnected: boolean): string {
+export function layout(title: string, body: string): string {
   return `<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -40,20 +51,22 @@ export function layout(title: string, body: string, navConnected: boolean): stri
 <style>${STYLE}</style>
 </head><body>
 <header>
-  <strong>📚 Kindle Digest</strong>
+  <strong>Kindle Digest</strong>
   <nav>
     <a href="/">Dashboard</a>
+    <a href="/feeds">Feeds</a>
     <a href="/settings">Settings</a>
-    ${navConnected ? '<a href="/auth/inoreader">Reconnect</a>' : '<a href="/auth/inoreader">Connect Inoreader</a>'}
   </nav>
 </header>
 <main>${body}</main>
 </body></html>`;
 }
 
-export function connectPrompt(reason: string): string {
-  return `<div class="notice"><strong>Inoreader not connected.</strong> ${escapeHtml(reason)}</div>
-  <p><a href="/auth/inoreader"><button>Connect Inoreader</button></a></p>`;
+export function noFeedsPrompt(error?: string): string {
+  const msg = error
+    ? `<div class="notice">${escapeHtml(error)}</div>`
+    : `<div class="notice">No feeds added yet. Go to <a href="/feeds">Feeds</a> to add your first RSS feed.</div>`;
+  return msg;
 }
 
 export interface RowFields {
@@ -86,7 +99,6 @@ function renderRow(date: string, folder: string, f: RowFields, included: boolean
   </div>`;
 }
 
-/** Re-render a single row (used by the HTMX toggle endpoint). */
 export function articleRowFragment(
   date: string,
   folder: string,
@@ -103,7 +115,7 @@ export interface DashboardFolder {
 
 export function dashboard(date: string, folders: DashboardFolder[]): string {
   if (folders.length === 0) {
-    return `<p class="muted">No unread articles in any folder right now. 🎉</p>`;
+    return `<p class="muted">No unread articles right now. <a href="/feeds/refresh">Refresh feeds</a> or add more in <a href="/feeds">Feeds</a>.</p>`;
   }
   const sections = folders
     .map((f) => {
@@ -149,6 +161,84 @@ export function sendResults(results: FolderSendResult[]): string {
     .join('\n');
 }
 
+export function feedsPage(feeds: Feed[]): string {
+  const byFolder = new Map<string, Feed[]>();
+  for (const f of feeds) {
+    if (!byFolder.has(f.folder)) byFolder.set(f.folder, []);
+    byFolder.get(f.folder)!.push(f);
+  }
+
+  const folderSections = [...byFolder.entries()]
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([folder, folderFeeds]) => {
+      const rows = folderFeeds
+        .map((f) => {
+          const status = f.lastError
+            ? `<span class="feed-status error">Error: ${escapeHtml(f.lastError)}</span>`
+            : f.lastFetchedAt
+              ? `<span class="feed-status">Last fetched ${new Date(f.lastFetchedAt).toLocaleString()}</span>`
+              : `<span class="feed-status">Not yet fetched</span>`;
+          return `<div class="feed-row">
+            <div class="meta">
+              <div class="feed-title">${escapeHtml(f.title || f.url)}</div>
+              <div class="feed-url">${escapeHtml(f.url)}</div>
+              ${status}
+            </div>
+            <form method="post" action="/feeds/${f.id}/delete" style="display:inline">
+              <button class="danger" type="submit" onclick="return confirm('Delete this feed and its articles?')">Delete</button>
+            </form>
+          </div>`;
+        })
+        .join('\n');
+      return `<section class="folder">
+        <h2>${escapeHtml(folder)}</h2>
+        ${rows}
+      </section>`;
+    })
+    .join('\n');
+
+  const emptyMsg = feeds.length === 0 ? `<p class="muted">No feeds yet. Add one below.</p>` : '';
+
+  // Collect known folders for the datalist.
+  const knownFolders = [...byFolder.keys()];
+  const folderOptions = knownFolders.map((f) => `<option value="${escapeHtml(f)}">`).join('');
+
+  return `<div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+    <h1 style="margin:0">Feeds (${feeds.length})</h1>
+    <form method="post" action="/feeds/refresh">
+      <button type="submit" class="secondary">Refresh all</button>
+    </form>
+  </div>
+  ${emptyMsg}
+  ${folderSections}
+  <datalist id="folders">${folderOptions}</datalist>
+  <div style="display:grid; grid-template-columns:1fr 1fr; gap:16px; margin-top:24px">
+    <section class="folder">
+      <h2>Add feed</h2>
+      <div style="padding:16px">
+        <form method="post" action="/feeds/add">
+          <label class="field"><span>Feed URL (RSS or Atom)</span>
+            <input name="url" type="url" placeholder="https://example.com/feed.xml" required /></label>
+          <label class="field"><span>Folder</span>
+            <input name="folder" list="folders" placeholder="Tech" value="Uncategorized" /></label>
+          <button type="submit">Add feed</button>
+        </form>
+      </div>
+    </section>
+    <section class="folder">
+      <h2>Import OPML</h2>
+      <div style="padding:16px">
+        <p class="muted" style="margin-top:0">Export your subscriptions from any feed reader (Inoreader, Feedly, etc.) and upload the .opml file. Folders are preserved.</p>
+        <form method="post" action="/feeds/import" enctype="multipart/form-data">
+          <label class="field"><span>OPML file</span>
+            <input name="opml" type="file" accept=".opml,.xml" required /></label>
+          <button type="submit">Import</button>
+        </form>
+      </div>
+    </section>
+  </div>`;
+}
+
 export function settingsPage(s: EffectiveSettings, timezones: string[]): string {
   const tzOptions = timezones
     .map(
@@ -156,7 +246,7 @@ export function settingsPage(s: EffectiveSettings, timezones: string[]): string 
     )
     .join('');
   return `<h1>Settings</h1>
-  <div class="notice">⚠ <strong>Kindle whitelist required.</strong> Add your SMTP <em>from</em> address
+  <div class="notice"><strong>Kindle whitelist required.</strong> Add your SMTP <em>from</em> address
     (<code>${escapeHtml(s.smtp.from ?? 'not set')}</code>) to Amazon's
     <em>Approved Personal Document E-mail List</em>, or deliveries are silently dropped.</div>
   <form method="post" action="/settings">
@@ -176,6 +266,5 @@ export function settingsPage(s: EffectiveSettings, timezones: string[]): string 
     <label class="field"><span>From address (must be Amazon-whitelisted)</span>
       <input name="smtpFrom" type="email" value="${escapeHtml(s.smtp.from ?? '')}" /></label>
     <p><button type="submit">Save settings</button></p>
-  </form>
-  <p class="muted">Inoreader: ${s.inoreaderConfigured ? 'API credentials configured (env).' : 'Set INOREADER_CLIENT_ID/SECRET in the environment.'}</p>`;
+  </form>`;
 }

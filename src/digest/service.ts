@@ -20,14 +20,14 @@ export function todayIso(timezone: string): string {
 
 /**
  * Build + send the digest for a single folder: fetch unread, drop excluded,
- * generate the EPUB, email it, then mark those items read in Inoreader.
+ * generate the EPUB, email it, then mark those items read.
  */
 export async function sendFolder(ctx: AppContext, folder: string): Promise<FolderSendResult> {
   const settings = resolveSettings(ctx.env, ctx.settings);
   const delivery = assertDeliverable(settings);
   const isoDate = todayIso(settings.timezone);
 
-  const client = ctx.inoreaderClient();
+  const client = ctx.readerClient();
   const all = await client.getUnreadByFolder(folder);
   const excluded = ctx.selection.excludedIds(isoDate);
   const included = all.filter((a) => !excluded.has(a.itemId));
@@ -65,7 +65,7 @@ export async function sendFolder(ctx: AppContext, folder: string): Promise<Folde
 
 /** Build + send digests for every top-level folder that has included articles. */
 export async function sendAll(ctx: AppContext): Promise<FolderSendResult[]> {
-  const client = ctx.inoreaderClient();
+  const client = ctx.readerClient();
   const folders = await client.getFolders();
   const results: FolderSendResult[] = [];
   for (const folder of folders) {

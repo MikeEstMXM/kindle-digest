@@ -1,4 +1,4 @@
-import type { NormalizedArticle } from '../inoreader/types.js';
+import type { NormalizedArticle } from '../reader/types.js';
 
 export interface FolderGroup {
   folder: string;

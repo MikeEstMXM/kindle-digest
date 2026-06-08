@@ -10,7 +10,7 @@ describe('buildDiagnosticsPage', () => {
     excluded: 2,
     totalGenerationMs: 4200,
     articles: [
-      { title: 'A', contentSource: 'inoreader', failureReason: null },
+      { title: 'A', contentSource: 'feed', failureReason: null },
       { title: 'B', contentSource: 'readability', failureReason: null },
       { title: 'C', contentSource: 'readability', failureReason: 'paywall' },
     ],
@@ -18,13 +18,13 @@ describe('buildDiagnosticsPage', () => {
 
   it('reports timestamp, counts and total generation time', () => {
     expect(page).toContain('2026-06-07 06:30:00 EDT');
-    expect(page).toContain('Total articles fetched from Inoreader</dt><dd>5');
+    expect(page).toContain('Total articles fetched</dt><dd>5');
     expect(page).toContain('3 included, 2 excluded');
     expect(page).toContain('4.2s');
   });
 
   it('attributes per-article content source accurately', () => {
-    expect(page).toContain('Inoreader API');
+    expect(page).toContain('RSS feed');
     expect(page).toContain('Readability.js fallback');
   });
 
@@ -41,7 +41,7 @@ describe('buildDiagnosticsPage', () => {
       included: 1,
       excluded: 0,
       totalGenerationMs: 100,
-      articles: [{ title: 'A', contentSource: 'inoreader', failureReason: null }],
+      articles: [{ title: 'A', contentSource: 'feed', failureReason: null }],
     });
     expect(clean).toContain('No extraction failures.');
   });

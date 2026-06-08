@@ -2,7 +2,7 @@ import { escapeHtml } from '../util/html.js';
 
 export interface DiagnosticsArticle {
   title: string;
-  contentSource?: 'inoreader' | 'readability';
+  contentSource?: 'feed' | 'readability';
   failureReason?: 'paywall' | 'js-rendered' | 'http-error' | null;
 }
 
@@ -17,7 +17,7 @@ export interface DiagnosticsData {
 }
 
 const SOURCE_LABEL: Record<string, string> = {
-  inoreader: 'Inoreader API',
+  feed: 'RSS feed',
   readability: 'Readability.js fallback',
 };
 
@@ -69,7 +69,7 @@ export function buildDiagnosticsPage(data: DiagnosticsData): string {
   <h1>Diagnostics — ${escapeHtml(data.folder)}</h1>
   <dl>
     <dt>Digest generated at</dt><dd>${escapeHtml(data.generatedAt)}</dd>
-    <dt>Total articles fetched from Inoreader</dt><dd>${data.totalFetched}</dd>
+    <dt>Total articles fetched</dt><dd>${data.totalFetched}</dd>
     <dt>Included / excluded</dt><dd>${data.included} included, ${data.excluded} excluded</dd>
     <dt>Total generation time</dt><dd>${seconds}s</dd>
   </dl>
