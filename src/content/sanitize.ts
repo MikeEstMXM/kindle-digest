@@ -2,35 +2,48 @@ import { JSDOM } from 'jsdom';
 
 const STRIP_TAGS = ['script', 'style', 'iframe', 'noscript', 'svg', 'video', 'audio', 'form'];
 
+export interface SanitizeResult {
+  xhtml: string;
+  /** Original src URLs for HTTP images found in the article body. Parallel to
+   *  %%img-N%% placeholder tokens left in xhtml so the orchestrator can
+   *  download, process, and substitute them. */
+  imageUrls: string[];
+}
+
 /**
  * Normalise article HTML into well-formed XHTML safe to embed in an EPUB.
  *
  * - Removes scripts/embeds that have no meaning on e-ink.
- * - Removes <img> elements: V1 EPUBs are self-contained and we do not bundle
- *   every in-article asset; the per-article QR links to the original for full
- *   fidelity (documented limitation). The cover image IS embedded separately.
- * - Re-serialises via XMLSerializer so the output is valid XHTML (self-closed
- *   voids, escaped entities) — EPUB readers reject malformed XML.
+ * - HTTP <img> src URLs are collected into imageUrls and replaced with
+ *   %%img-N%% placeholder tokens for the caller to resolve and embed.
+ *   Images with no usable src fall back to an italic alt-text caption.
+ * - Re-serialises via XMLSerializer so the output is valid XHTML.
  */
-export function sanitizeArticleHtml(html: string): string {
+export function sanitizeArticleHtml(html: string): SanitizeResult {
   const dom = new JSDOM(`<!DOCTYPE html><html><body>${html}</body></html>`);
   const { document, XMLSerializer } = dom.window;
 
   for (const tag of STRIP_TAGS) {
     document.querySelectorAll(tag).forEach((el) => el.remove());
   }
-  // Replace images with their alt text (if any) so captions survive.
+
+  const imageUrls: string[] = [];
   document.querySelectorAll('img').forEach((img) => {
-    const alt = img.getAttribute('alt');
-    if (alt && alt.trim()) {
+    const src = img.getAttribute('src') ?? '';
+    const alt = (img.getAttribute('alt') ?? '').trim();
+    if (src.startsWith('http://') || src.startsWith('https://')) {
+      img.setAttribute('src', `%%img-${imageUrls.length}%%`);
+      imageUrls.push(src);
+    } else if (alt) {
       const em = document.createElement('em');
-      em.textContent = `[image: ${alt.trim()}]`;
+      em.textContent = `[image: ${alt}]`;
       img.replaceWith(em);
     } else {
       img.remove();
     }
   });
-  // Drop event-handler / style attributes.
+
+  // Drop event-handler / style / class attributes.
   document.querySelectorAll('*').forEach((el) => {
     for (const attr of [...el.attributes]) {
       if (attr.name.startsWith('on') || attr.name === 'style' || attr.name === 'class') {
@@ -40,8 +53,10 @@ export function sanitizeArticleHtml(html: string): string {
   });
 
   const serializer = new XMLSerializer();
-  return [...document.body.childNodes]
+  const xhtml = [...document.body.childNodes]
     .map((n) => serializer.serializeToString(n))
     .join('')
     .trim();
+
+  return { xhtml, imageUrls };
 }

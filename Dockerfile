@@ -2,8 +2,9 @@
 FROM node:22-bookworm-slim
 
 # Build deps for native modules (better-sqlite3) + runtime libs for sharp.
+# fonts-liberation provides Liberation Serif/Sans as fallback for SVG cover overlay.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 make g++ ca-certificates \
+    python3 make g++ ca-certificates fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

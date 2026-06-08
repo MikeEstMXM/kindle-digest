@@ -59,8 +59,8 @@ export async function processCoverImage(
     .grayscale()
     .linear(a, b)
     .modulate({ brightness: adjust.brightness })
-    .resize({ width: 1200, height: 900, fit: 'inside', withoutEnlargement: true })
-    .jpeg({ quality: 70 });
+    .resize({ width: 1600, height: 2400, fit: 'cover', position: 'centre' })
+    .jpeg({ quality: 85 });
   const { data, info } = await pipeline.toBuffer({ resolveWithObject: true });
   return { jpeg: data, width: info.width, height: info.height };
 }

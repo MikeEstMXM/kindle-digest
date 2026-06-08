@@ -8,10 +8,10 @@ import { generateQrPng } from '../content/qr.js';
 import {
   downloadImage,
   findCoverImageUrl,
-  processCoverImage,
+  processArticleImage,
 } from '../content/images.js';
-import { renderCover, IMAGE_ADJUST } from '../cover/render.js';
-import { templateFor } from '../cover/hash.js';
+import { renderCover } from '../cover/render.js';
+import { buildCoverJpeg } from '../cover/composite.js';
 import { buildArticlePage } from '../epub/article.js';
 import { buildTocPage } from '../epub/toc.js';
 import { buildEpub, type EpubArticle, type EpubBinary } from '../epub/writer.js';
@@ -41,6 +41,7 @@ interface ResolvedArticle {
   source: ContentSource;
   failureReason: FailureReason;
   bodyXhtml: string;
+  imageUrls: string[];
   extractMs: number;
 }
 
@@ -51,45 +52,26 @@ async function resolveContent(
 ): Promise<ResolvedArticle> {
   const started = Date.now();
   if (contentIsFull(article, minChars)) {
-    return {
-      article,
-      source: 'feed',
-      failureReason: null,
-      bodyXhtml: sanitizeArticleHtml(article.contentHtml),
-      extractMs: Date.now() - started,
-    };
+    const { xhtml, imageUrls } = sanitizeArticleHtml(article.contentHtml);
+    return { article, source: 'feed', failureReason: null, bodyXhtml: xhtml, imageUrls, extractMs: Date.now() - started };
   }
   const result = await extractFullText(article.url, fetchPage);
-  return {
-    article,
-    source: 'readability',
-    failureReason: result.failureReason,
-    bodyXhtml: sanitizeArticleHtml(result.html),
-    extractMs: Date.now() - started,
-  };
+  const { xhtml, imageUrls } = sanitizeArticleHtml(result.html);
+  return { article, source: 'readability', failureReason: result.failureReason, bodyXhtml: xhtml, imageUrls, extractMs: Date.now() - started };
 }
 
-/** Pick + process a grayscale cover background; undefined → crosshatch fallback. */
-async function buildCoverImage(
-  folder: string,
+/** Download raw background image for compositing; returns undefined on any error. */
+async function downloadRawCoverImage(
   articles: NormalizedArticle[],
   fetchImage: typeof fetch = fetch,
-): Promise<EpubBinary | undefined> {
+): Promise<Buffer | undefined> {
   const candidates = articles
     .map((a) => findCoverImageUrl(a.contentHtml))
     .filter((u): u is string => Boolean(u));
   if (candidates.length === 0) return undefined;
   const pick = candidates[Math.floor(Math.random() * candidates.length)];
   try {
-    const raw = await downloadImage(pick, fetchImage);
-    const adjust = IMAGE_ADJUST[templateFor(folder)];
-    const processed = await processCoverImage(raw, adjust);
-    return {
-      href: 'images/cover.jpg',
-      data: processed.jpeg,
-      mediaType: 'image/jpeg',
-      isCover: true,
-    };
+    return await downloadImage(pick, fetchImage);
   } catch {
     return undefined;
   }
@@ -118,7 +100,7 @@ export async function buildFolderDigest(
     resolved.push(await resolveContent(article, opts.minChars, opts.fetchPage));
   }
 
-  // Build article pages + QR images.
+  // Build article pages + QR images + inline article images.
   const epubArticles: EpubArticle[] = [];
   const images: EpubBinary[] = [];
   let idx = 0;
@@ -127,6 +109,24 @@ export async function buildFolderDigest(
     const qrHref = `images/qr-${idx}.png`;
     const qr = await generateQrPng(r.article.url, { size: 220 });
     images.push({ href: qrHref, data: qr, mediaType: 'image/png' });
+
+    // Download + embed inline article images; substitute or strip placeholders.
+    let bodyXhtml = r.bodyXhtml;
+    for (let i = 0; i < r.imageUrls.length; i++) {
+      const imgHref = `images/art-${idx}-img-${i}.jpg`;
+      try {
+        const raw = await downloadImage(r.imageUrls[i], opts.fetchImage ?? fetch);
+        const processed = await processArticleImage(raw);
+        images.push({ href: imgHref, data: processed.jpeg, mediaType: 'image/jpeg' });
+        bodyXhtml = bodyXhtml.replace(`%%img-${i}%%`, imgHref);
+      } catch {
+        // Remove the unresolved img element
+        bodyXhtml = bodyXhtml.replace(
+          new RegExp(`<img[^>]*src="%%img-${i}%%"[^>]*\\/>`, 'g'),
+          '',
+        );
+      }
+    }
 
     epubArticles.push({
       id: `art-${idx}`,
@@ -140,7 +140,7 @@ export async function buildFolderDigest(
         dateLabel: r.article.publishedMs
           ? DateTime.fromMillis(r.article.publishedMs).setZone(opts.timezone).toFormat('LLLL d, yyyy')
           : undefined,
-        bodyXhtml: r.bodyXhtml,
+        bodyXhtml,
         qrHref,
       }),
     });
@@ -164,17 +164,15 @@ export async function buildFolderDigest(
     })),
   );
 
-  // Cover.
-  const coverImage = await buildCoverImage(folder, articles, opts.fetchImage ?? fetch);
-  if (coverImage) images.unshift(coverImage);
-  const cover = renderCover({
-    folder,
-    weekday,
-    isoDate: opts.isoDate,
-    dateLabel,
-    feeds: feedCounts(articles),
-    backgroundImageHref: coverImage?.href,
-  });
+  // Cover — Sharp-composited 1600×2400 JPEG with SVG overlay.
+  const rawCoverImage = await downloadRawCoverImage(articles, opts.fetchImage ?? fetch);
+  const coverJpeg = await buildCoverJpeg(
+    { folder, weekday, isoDate: opts.isoDate, dateLabel, feeds: feedCounts(articles) },
+    rawCoverImage,
+    opts.fonts,
+  );
+  images.unshift({ href: 'images/cover.jpg', data: coverJpeg, mediaType: 'image/jpeg', isCover: true });
+  const cover = renderCover({ folder, weekday, isoDate: opts.isoDate, dateLabel, feeds: feedCounts(articles) });
 
   // Diagnostics.
   const totalGenerationMs = Date.now() - startedAt;
