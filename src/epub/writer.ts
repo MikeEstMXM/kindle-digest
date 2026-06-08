@@ -30,6 +30,7 @@ export interface EpubInput {
   date: string;
   series: { name: string; index: string };
   coverXhtml: string;
+  tocXhtml: string;
   articles: EpubArticle[];
   diagnosticsXhtml: string;
   fonts: { file: string; data: Buffer }[];
@@ -37,6 +38,7 @@ export interface EpubInput {
 }
 
 const COVER_ID = 'cover-page';
+const TOC_ID = 'toc';
 const DIAG_ID = 'diagnostics';
 
 /** Assemble the manifest + spine for an EPUB (pure, unit-testable). */
@@ -49,6 +51,7 @@ export function buildManifestAndSpine(input: EpubInput): {
     { id: 'nav', href: 'nav.xhtml', mediaType: 'application/xhtml+xml', properties: 'nav' },
     { id: 'style', href: 'style.css', mediaType: 'text/css' },
     { id: COVER_ID, href: 'cover.xhtml', mediaType: 'application/xhtml+xml' },
+    { id: TOC_ID, href: 'toc.xhtml', mediaType: 'application/xhtml+xml' },
   ];
 
   for (const a of input.articles) {
@@ -76,10 +79,11 @@ export function buildManifestAndSpine(input: EpubInput): {
     });
   }
 
-  // Spine: cover first, then articles, diagnostics last.
-  const spine = [COVER_ID, ...input.articles.map((a) => a.id), DIAG_ID];
+  // Spine: cover, ToC, then articles, diagnostics last.
+  const spine = [COVER_ID, TOC_ID, ...input.articles.map((a) => a.id), DIAG_ID];
 
   const nav: NavEntry[] = [
+    { href: 'toc.xhtml', label: 'Contents' },
     ...input.articles.map((a) => ({ href: a.filename, label: a.title })),
     { href: 'diagnostics.xhtml', label: 'Diagnostics' },
   ];
@@ -115,6 +119,7 @@ export async function buildEpub(input: EpubInput): Promise<Buffer> {
   oebps.file('nav.xhtml', buildNav(input.title, nav));
   oebps.file('style.css', contentCss());
   oebps.file('cover.xhtml', input.coverXhtml);
+  oebps.file('toc.xhtml', input.tocXhtml);
   oebps.file('diagnostics.xhtml', input.diagnosticsXhtml);
   for (const a of input.articles) oebps.file(a.filename, a.xhtml);
   for (const f of input.fonts) oebps.file(`fonts/${f.file}`, f.data);

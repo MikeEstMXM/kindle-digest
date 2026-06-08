@@ -34,7 +34,13 @@ export async function sendFolder(ctx: AppContext, folder: string): Promise<Folde
   const client = ctx.readerClient();
   const all = await client.getRecentByFolder(folder, sinceMs);
   const excluded = ctx.selection.excludedIds(isoDate);
-  const included = all.filter((a) => !excluded.has(a.itemId));
+  const included = all
+    .filter((a) => !excluded.has(a.itemId))
+    .sort((a, b) => {
+      const fc = a.feedTitle.localeCompare(b.feedTitle);
+      if (fc !== 0) return fc;
+      return (b.publishedMs ?? 0) - (a.publishedMs ?? 0);
+    });
 
   if (included.length === 0) {
     return { folder, articleCount: 0, status: 'skipped', message: 'No included articles' };

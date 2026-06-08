@@ -10,6 +10,7 @@ function sampleInput(): EpubInput {
     date: '2026-06-07',
     series: { name: 'Technology', index: '2026-06-07' },
     coverXhtml: '<?xml version="1.0"?><html><body>cover</body></html>',
+    tocXhtml: '<?xml version="1.0"?><html><body>toc</body></html>',
     articles: [
       { id: 'art-1', filename: 'art-1.xhtml', title: 'First', xhtml: '<html><body>1</body></html>' },
       { id: 'art-2', filename: 'art-2.xhtml', title: 'Second', xhtml: '<html><body>2</body></html>' },
@@ -24,9 +25,9 @@ function sampleInput(): EpubInput {
 }
 
 describe('buildManifestAndSpine', () => {
-  it('orders spine: cover → articles → diagnostics', () => {
+  it('orders spine: cover → toc → articles → diagnostics', () => {
     const { spine } = buildManifestAndSpine(sampleInput());
-    expect(spine).toEqual(['cover-page', 'art-1', 'art-2', 'diagnostics']);
+    expect(spine).toEqual(['cover-page', 'toc', 'art-1', 'art-2', 'diagnostics']);
   });
 
   it('marks the cover image with cover-image property', () => {
@@ -64,12 +65,13 @@ describe('buildEpub', () => {
     expect(zip.file('mimetype')).toBeTruthy();
     expect(zip.file('META-INF/container.xml')).toBeTruthy();
     expect(zip.file('OEBPS/cover.xhtml')).toBeTruthy();
+    expect(zip.file('OEBPS/toc.xhtml')).toBeTruthy();
     expect(zip.file('OEBPS/diagnostics.xhtml')).toBeTruthy();
     expect(zip.file('OEBPS/fonts/Oswald-700.woff2')).toBeTruthy();
     expect(zip.file('OEBPS/images/cover.jpg')).toBeTruthy();
 
     const opf = await zip.file('OEBPS/content.opf')!.async('string');
-    const order = ['cover-page', 'art-1', 'art-2', 'diagnostics'].map(
+    const order = ['cover-page', 'toc', 'art-1', 'art-2', 'diagnostics'].map(
       (id) => opf.indexOf(`idref="${id}"`),
     );
     expect(order).toEqual([...order].sort((a, b) => a - b));

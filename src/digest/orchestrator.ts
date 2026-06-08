@@ -13,6 +13,7 @@ import {
 import { renderCover, IMAGE_ADJUST } from '../cover/render.js';
 import { templateFor } from '../cover/hash.js';
 import { buildArticlePage } from '../epub/article.js';
+import { buildTocPage } from '../epub/toc.js';
 import { buildEpub, type EpubArticle, type EpubBinary } from '../epub/writer.js';
 import { buildDiagnosticsPage } from '../diagnostics/build.js';
 import { feedCounts } from './grouping.js';
@@ -154,6 +155,15 @@ export async function buildFolderDigest(
     });
   }
 
+  // Table of contents.
+  const tocXhtml = buildTocPage(
+    epubArticles.map((a, i) => ({
+      filename: a.filename,
+      title: a.title,
+      feedTitle: resolved[i].article.feedTitle,
+    })),
+  );
+
   // Cover.
   const coverImage = await buildCoverImage(folder, articles, opts.fetchImage ?? fetch);
   if (coverImage) images.unshift(coverImage);
@@ -189,6 +199,7 @@ export async function buildFolderDigest(
     date: opts.isoDate,
     series: { name: folder, index: opts.isoDate },
     coverXhtml: cover.xhtml,
+    tocXhtml,
     articles: epubArticles,
     diagnosticsXhtml: diagnostics,
     fonts: opts.fonts,

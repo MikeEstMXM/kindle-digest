@@ -25,9 +25,12 @@ export function buildArticlePage(input: ArticlePageInput): string {
   <title>${escapeHtml(input.title)}</title>
   <link rel="stylesheet" type="text/css" href="style.css" />
 </head>
-<body>
-  <h1 class="article-title">${escapeHtml(input.title)}</h1>
-  <div class="article-meta">${meta}</div>
+<body class="article-page">
+  <header class="article-header">
+    <a href="toc.xhtml" class="back-link">&#x2191; Contents</a>
+    <h1 class="article-title">${escapeHtml(input.title)}</h1>
+    <div class="article-meta">${meta}</div>
+  </header>
   <div class="article-body">
 ${input.bodyXhtml}
   </div>
