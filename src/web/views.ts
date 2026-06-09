@@ -132,6 +132,8 @@ export function dashboard(date: string, folders: DashboardFolder[]): string {
         )
         .join('\n');
       const windowLabel = f.cadence === 'weekly' ? 'last 7 days' : 'last 24h';
+      const excludedCount = f.articles.length - includedCount;
+      const summaryLabel = `${includedCount} included${excludedCount ? `, ${excludedCount} excluded` : ''} — tap to review`;
       return `<section class="folder">
       <h2 style="flex-wrap:wrap; gap:8px">
         <span style="flex:1">${escapeHtml(f.folder)} <span class="muted">(${includedCount}/${f.articles.length} · ${windowLabel})</span></span>
@@ -142,7 +144,10 @@ export function dashboard(date: string, folders: DashboardFolder[]): string {
           <button type="submit" class="secondary" style="padding:4px 8px;font-size:13px">Send date</button>
         </form>
       </h2>
-      ${rows}
+      <details>
+        <summary style="padding:8px 16px;cursor:pointer;font-size:13px;color:var(--muted);border-top:1px solid #f0f0f0;list-style:none;user-select:none">${summaryLabel}</summary>
+        ${rows}
+      </details>
     </section>`;
     })
     .join('\n');
