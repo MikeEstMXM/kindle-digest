@@ -52,6 +52,27 @@ export function sanitizeArticleHtml(html: string): SanitizeResult {
     }
   });
 
+  // ADE/Kindle compatibility fixes.
+  // <center> → <div style="text-align:center">
+  document.querySelectorAll('center').forEach((el) => {
+    const div = document.createElement('div');
+    div.setAttribute('style', 'text-align:center');
+    while (el.firstChild) div.appendChild(el.firstChild);
+    el.replaceWith(div);
+  });
+  // <br> as direct child of <body> → <p> (prevents layout issues on Kindle)
+  document.querySelectorAll('body > br').forEach((br) => {
+    const p = document.createElement('p');
+    p.setAttribute('style', 'margin:0');
+    br.replaceWith(p);
+  });
+  // Strip zero-width spaces and soft hyphens from text nodes.
+  const walker = document.createTreeWalker(document.body, 4 /* NodeFilter.SHOW_TEXT */);
+  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+    const cleaned = node.textContent!.replace(/[​­]/g, '');
+    if (cleaned !== node.textContent) node.textContent = cleaned;
+  }
+
   const serializer = new XMLSerializer();
   const xhtml = [...document.body.childNodes]
     .map((n) => serializer.serializeToString(n))

@@ -14,10 +14,13 @@ import { renderCover } from '../cover/render.js';
 import { buildCoverJpeg } from '../cover/composite.js';
 import { buildArticlePage } from '../epub/article.js';
 import { buildTocPage } from '../epub/toc.js';
-import { buildEpub, type EpubArticle, type EpubBinary } from '../epub/writer.js';
+import { buildEpub, type EpubArticle, type EpubBinary, type EpubFeedGroup } from '../epub/writer.js';
 import { buildDiagnosticsPage } from '../diagnostics/build.js';
 import { feedCounts } from './grouping.js';
 import type { LoadedFont } from '../cover/fontLoader.js';
+import { buildNcx } from '../epub/ncx.js';
+import { buildMasthead } from '../epub/masthead.js';
+import { buildSectionIndexPage } from '../epub/sectionIndex.js';
 
 export interface BuildOptions {
   isoDate: string;
@@ -100,12 +103,43 @@ export async function buildFolderDigest(
     resolved.push(await resolveContent(article, opts.minChars, opts.fetchPage));
   }
 
+  // Pre-compute feed section ordering for NCX and nav bars.
+  const feedOrder: string[] = [];
+  const feedIndexMap = new Map<string, number>(); // feedTitle → feedIdx
+  for (const r of resolved) {
+    if (!feedIndexMap.has(r.article.feedTitle)) {
+      feedIndexMap.set(r.article.feedTitle, feedOrder.length);
+      feedOrder.push(r.article.feedTitle);
+    }
+  }
+  // Articles grouped by feedIdx (preserving insertion order within each feed).
+  const feedArticleIndices = new Map<number, number[]>();
+  for (let i = 0; i < resolved.length; i++) {
+    const fi = feedIndexMap.get(resolved[i].article.feedTitle)!;
+    if (!feedArticleIndices.has(fi)) feedArticleIndices.set(fi, []);
+    feedArticleIndices.get(fi)!.push(i);
+  }
+
   // Build article pages + QR images + inline article images.
   const epubArticles: EpubArticle[] = [];
   const images: EpubBinary[] = [];
   let idx = 0;
   for (const r of resolved) {
     idx += 1;
+    const artFilename = `art-${idx}.xhtml`;
+    const feedIdx = feedIndexMap.get(r.article.feedTitle)!;
+    const sectionFilename = `feed-${feedIdx}-index.xhtml`;
+
+    // Compute prev/next within this feed section.
+    const sectionIndices = feedArticleIndices.get(feedIdx)!;
+    const posInSection = sectionIndices.indexOf(idx - 1);
+    const prevFilename =
+      posInSection > 0 ? `art-${sectionIndices[posInSection - 1] + 1}.xhtml` : null;
+    const nextFilename =
+      posInSection < sectionIndices.length - 1
+        ? `art-${sectionIndices[posInSection + 1] + 1}.xhtml`
+        : null;
+
     const qrHref = `images/qr-${idx}.png`;
     const qr = await generateQrPng(r.article.url, { size: 220 });
     images.push({ href: qrHref, data: qr, mediaType: 'image/png' });
@@ -130,7 +164,7 @@ export async function buildFolderDigest(
 
     epubArticles.push({
       id: `art-${idx}`,
-      filename: `art-${idx}.xhtml`,
+      filename: artFilename,
       title: r.article.title,
       xhtml: buildArticlePage({
         title: r.article.title,
@@ -142,6 +176,7 @@ export async function buildFolderDigest(
           : undefined,
         bodyXhtml,
         qrHref,
+        navBar: { prevHref: prevFilename, nextHref: nextFilename, sectionHref: sectionFilename },
       }),
     });
 
@@ -174,6 +209,36 @@ export async function buildFolderDigest(
   images.unshift({ href: 'images/cover.jpg', data: coverJpeg, mediaType: 'image/jpeg', isCover: true });
   const cover = renderCover({ folder, weekday, isoDate: opts.isoDate, dateLabel, feeds: feedCounts(articles) });
 
+  // Masthead image (600×60 for Kindle periodical display).
+  const mastheadBuffer = await buildMasthead(folder);
+  images.push({ href: 'images/masthead.jpg', data: mastheadBuffer, mediaType: 'image/jpeg' });
+
+  // Feed section index pages + groups for NCX spine ordering.
+  const feedGroups: EpubFeedGroup[] = feedOrder.map((feedTitle, fi) => {
+    const sectionFilename = `feed-${fi}-index.xhtml`;
+    const sectionArticleIndices = feedArticleIndices.get(fi)!;
+    const sectionArticles = sectionArticleIndices.map((i) => epubArticles[i]);
+    return {
+      feedTitle,
+      filename: sectionFilename,
+      xhtml: buildSectionIndexPage(
+        feedTitle,
+        sectionArticles.map((a) => ({ filename: a.filename, title: a.title })),
+      ),
+      articleIds: sectionArticles.map((a) => a.id),
+    };
+  });
+
+  // NCX 2.0 for Kindle periodical navigation (3-level: periodical → section → article).
+  const ncxXml = buildNcx(folder, feedGroups.map((g) => ({
+    feedTitle: g.feedTitle,
+    sectionFilename: g.filename,
+    articles: g.articleIds.map((id) => {
+      const a = epubArticles.find((ea) => ea.id === id)!;
+      return { id: a.id, filename: a.filename, title: a.title };
+    }),
+  })));
+
   // Diagnostics.
   const totalGenerationMs = Date.now() - startedAt;
   const diagnostics = buildDiagnosticsPage({
@@ -202,6 +267,8 @@ export async function buildFolderDigest(
     diagnosticsXhtml: diagnostics,
     fonts: opts.fonts,
     images,
+    feedGroups,
+    ncxXml,
   });
 
   if (runId !== undefined) runLog?.finish(runId, 'sent', Date.now() - startedAt);

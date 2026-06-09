@@ -1,5 +1,11 @@
 import { escapeHtml } from '../util/html.js';
 
+export interface ArticleNavBar {
+  prevHref: string | null;
+  nextHref: string | null;
+  sectionHref: string;
+}
+
 export interface ArticlePageInput {
   title: string;
   url: string;
@@ -10,6 +16,17 @@ export interface ArticlePageInput {
   bodyXhtml: string;
   /** href of the QR PNG within OEBPS, e.g. "images/qr-1.png". */
   qrHref: string;
+  navBar?: ArticleNavBar;
+}
+
+function renderNavBar(nav: ArticleNavBar): string {
+  const prev = nav.prevHref
+    ? `<a href="${escapeHtml(nav.prevHref)}">&#x25C0; Prev</a>`
+    : '<span class="nav-disabled">&#x25C0; Prev</span>';
+  const next = nav.nextHref
+    ? `<a href="${escapeHtml(nav.nextHref)}">Next &#x25B6;</a>`
+    : '<span class="nav-disabled">Next &#x25B6;</span>';
+  return `  <div class="calibre_navbar">${prev} | <a href="${escapeHtml(nav.sectionHref)}">Section</a> | <a href="toc.xhtml">Main</a> | ${next}</div>`;
 }
 
 /** Build a single article page. QR (source link) is appended at the end. */
@@ -38,6 +55,7 @@ ${input.bodyXhtml}
     <img src="${escapeHtml(input.qrHref)}" alt="QR code linking to the original article" />
     <div class="caption">Open the original: ${escapeHtml(input.url)}</div>
   </div>
+${input.navBar ? renderNavBar(input.navBar) : ''}
 </body>
 </html>`;
 }

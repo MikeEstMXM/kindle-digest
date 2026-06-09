@@ -18,6 +18,10 @@ h1.article-title { font-size: 1.5em; line-height: 1.2; margin: 0.6em 0 0.2em; }
 .source-link img { width: 200px; height: 200px; }
 .source-link .caption { font-size: 0.8em; color: #555; margin-top: 0.4em; word-break: break-all; }
 hr.article-sep { border: 0; border-top: 1px solid #ccc; margin: 2em 0; }
+.calibre_navbar { font-family: monospace; font-size: 0.75em; text-align: center; margin: 1.5em 0 0.5em; color: #555; }
+.calibre_navbar a { color: #333; }
+.nav-disabled { color: #aaa; }
+.section-article-list { list-style: none; padding: 0; margin: 0; }
 
 /* Diagnostics */
 .diag h1 { font-size: 1.4em; }

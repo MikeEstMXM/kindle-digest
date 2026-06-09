@@ -7,6 +7,12 @@ export interface ManifestItem {
   properties?: string;
 }
 
+export interface OpfGuide {
+  mastheadHref: string;
+  tocHref: string;
+  startHref: string;
+}
+
 export interface OpfInput {
   identifier: string;
   title: string;
@@ -20,12 +26,15 @@ export interface OpfInput {
   manifest: ManifestItem[];
   /** Ordered list of manifest ids forming the reading order. */
   spine: string[];
+  /** If present, the spine element gets toc="ncxId" for Kindle periodical nav. */
+  ncxId?: string;
+  /** If present, a <guide> element is added for Kindle periodical metadata. */
+  guide?: OpfGuide;
 }
 
 /**
- * Build content.opf. Series metadata is written two ways for maximum reader
- * compatibility: EPUB3 `belongs-to-collection` (series) and the legacy
- * calibre meta. Series name = folder; series index = ISO date string.
+ * Build content.opf. Includes EPUB3 series metadata plus NCX spine reference
+ * and guide element for Kindle periodical navigation when provided.
  */
 export function buildOpf(input: OpfInput): string {
   const manifestXml = input.manifest
@@ -37,7 +46,16 @@ export function buildOpf(input: OpfInput): string {
     )
     .join('\n');
 
+  const spineAttrs = input.ncxId ? ` toc="${escapeHtml(input.ncxId)}"` : '';
   const spineXml = input.spine.map((id) => `    <itemref idref="${id}" />`).join('\n');
+
+  const guideXml = input.guide
+    ? `  <guide>
+    <reference type="masthead" href="${escapeHtml(input.guide.mastheadHref)}" title="Masthead"/>
+    <reference type="toc" href="${escapeHtml(input.guide.tocHref)}" title="Table of Contents"/>
+    <reference type="start" href="${escapeHtml(input.guide.startHref)}" title="Start"/>
+  </guide>`
+    : '';
 
   return `<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id">
@@ -47,6 +65,7 @@ export function buildOpf(input: OpfInput): string {
     <dc:language>${escapeHtml(input.language)}</dc:language>
     <dc:creator>${escapeHtml(input.author)}</dc:creator>
     <dc:date>${escapeHtml(input.date)}</dc:date>
+    <dc:type>magazine</dc:type>
     <meta property="dcterms:modified">${escapeHtml(input.modified)}</meta>
     <meta property="belongs-to-collection" id="series-id">${escapeHtml(input.series.name)}</meta>
     <meta refines="#series-id" property="collection-type">series</meta>
@@ -57,9 +76,10 @@ export function buildOpf(input: OpfInput): string {
   <manifest>
 ${manifestXml}
   </manifest>
-  <spine>
+  <spine${spineAttrs}>
 ${spineXml}
   </spine>
+${guideXml}
 </package>`;
 }
 
