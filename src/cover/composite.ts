@@ -44,17 +44,17 @@ const CFGS: Record<TemplateId, TemplateCfg> = {
       [1, 'rgba(0,0,0,0.92)'],
     ],
     headerBg: '#000000',
-    weekdaySize: 15, // vw%  (was 84px CSS, clamp is 15vw)
+    weekdaySize: 18,       // vw% — large serif, distinctive weight
     weekdayWeight: '900',
     weekdayItalic: false,
     weekdayUppercase: false,
     weekdayLetterSpacing: '-0.04em',
-    folderSize: 3.4, // vw%
-    feedSize: 2.2, // vw%
+    folderSize: 5.5,       // vw% — large enough to read on thumbnail
+    feedSize: 2.5,         // vw%
     feedUppercase: false,
     align: 'left',
-    bottomPad: 5, // vh%
-    sidePad: 6, // vw%
+    bottomPad: 5,          // vh%
+    sidePad: 6,            // vw%
   },
   'the-drop': {
     gradient: [
@@ -64,17 +64,17 @@ const CFGS: Record<TemplateId, TemplateCfg> = {
       [1, 'rgba(0,0,0,0.96)'],
     ],
     headerBg: null,
-    weekdaySize: 22, // vw%  (22vw from TSX)
+    weekdaySize: 24,       // vw% — massive condensed headline dominates the cover
     weekdayWeight: '400',
     weekdayItalic: false,
     weekdayUppercase: true,
     weekdayLetterSpacing: '0.03em',
-    folderSize: 3.0, // vw%
-    feedSize: 1.8, // vw%
+    folderSize: 5.0,       // vw%
+    feedSize: 2.0,         // vw%
     feedUppercase: true,
     align: 'left',
-    bottomPad: 5, // vh%
-    sidePad: 6, // vw%
+    bottomPad: 7,          // vh% — more breathing room at bottom
+    sidePad: 6,            // vw%
   },
   'the-review': {
     gradient: [
@@ -84,17 +84,17 @@ const CFGS: Record<TemplateId, TemplateCfg> = {
       [1, 'rgba(0,0,0,0.94)'],
     ],
     headerBg: null,
-    weekdaySize: 12, // vw%  (12vw from TSX)
+    weekdaySize: 17,       // vw% — italic serif, legible at full size and thumbnail
     weekdayWeight: '400',
     weekdayItalic: true,
     weekdayUppercase: false,
     weekdayLetterSpacing: '-0.02em',
-    folderSize: 3.0, // vw%
-    feedSize: 2.1, // vw%
+    folderSize: 6,         // vw% — noticeably larger; center-aligned makes it feel refined
+    feedSize: 2.5,         // vw%
     feedUppercase: false,
     align: 'center',
-    bottomPad: 5.5, // vh%
-    sidePad: 7, // vw%
+    bottomPad: 7,          // vh% — elegant spacing
+    sidePad: 7,            // vw%
   },
   'the-signal': {
     gradient: [
@@ -104,17 +104,17 @@ const CFGS: Record<TemplateId, TemplateCfg> = {
       [1, 'rgba(0,0,0,0.95)'],
     ],
     headerBg: '#000000',
-    weekdaySize: 17.5, // vw%  (17.5vw from TSX)
+    weekdaySize: 20,       // vw% — condensed all-caps, slightly smaller than the-drop
     weekdayWeight: '700',
     weekdayItalic: false,
     weekdayUppercase: true,
     weekdayLetterSpacing: '0.01em',
-    folderSize: 3.0, // vw%
-    feedSize: 2.0, // vw%
+    folderSize: 5.0,       // vw%
+    feedSize: 2.2,         // vw%
     feedUppercase: true,
     align: 'left',
-    bottomPad: 5, // vh%
-    sidePad: 6, // vw%
+    bottomPad: 5,          // vh%
+    sidePad: 6,            // vw%
   },
 };
 

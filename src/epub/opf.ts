@@ -47,9 +47,10 @@ export function buildOpf(input: OpfInput): string {
     <dc:language>${escapeHtml(input.language)}</dc:language>
     <dc:creator>${escapeHtml(input.author)}</dc:creator>
     <dc:date>${escapeHtml(input.date)}</dc:date>
+    <dc:type>Magazine</dc:type>
     <meta property="dcterms:modified">${escapeHtml(input.modified)}</meta>
     <meta property="belongs-to-collection" id="series-id">${escapeHtml(input.series.name)}</meta>
-    <meta refines="#series-id" property="collection-type">series</meta>
+    <meta refines="#series-id" property="collection-type">periodical</meta>
     <meta refines="#series-id" property="group-position">${escapeHtml(input.series.index)}</meta>
     <meta name="calibre:series" content="${escapeHtml(input.series.name)}" />
     <meta name="calibre:series_index" content="${escapeHtml(input.series.index)}" />
