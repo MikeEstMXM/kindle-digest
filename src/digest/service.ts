@@ -13,6 +13,8 @@ export interface FolderSendResult {
   articleCount: number;
   status: 'sent' | 'skipped' | 'error';
   message?: string;
+  /** URL to download this specific issue after sending. */
+  downloadUrl?: string;
 }
 
 /** Today's ISO date in the configured timezone. */
@@ -71,11 +73,12 @@ export async function sendFolder(
     ctx.runLog,
   );
 
-  // Persist the latest digest to disk so the download endpoint can serve it.
+  // Persist to disk: both a dated file and the rolling "latest" alias.
+  const safeFolder = folder.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
   try {
     const digestsDir = '/data/digests';
     mkdirSync(digestsDir, { recursive: true });
-    const safeFolder = folder.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+    writeFileSync(join(digestsDir, `${safeFolder}-${isoDate}.azw3`), built.epub);
     writeFileSync(join(digestsDir, `${safeFolder}-latest.azw3`), built.epub);
   } catch {
     // Non-fatal: storage write failure should not block email delivery.
@@ -90,7 +93,12 @@ export async function sendFolder(
     { filename: built.filename, content: built.epub },
   );
 
-  return { folder, articleCount: included.length, status: 'sent' };
+  return {
+    folder,
+    articleCount: included.length,
+    status: 'sent',
+    downloadUrl: `/digests/${encodeURIComponent(folder)}/${isoDate}`,
+  };
 }
 
 /** Build + send digests for every top-level folder that has included articles. */

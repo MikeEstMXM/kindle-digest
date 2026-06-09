@@ -169,7 +169,11 @@ export function sendResults(results: FolderSendResult[]): string {
           : r.status === 'skipped'
             ? r.message ?? 'Skipped.'
             : `Error: ${r.message ?? 'unknown'}`;
-      return `<div class="result ${r.status}"><strong>${escapeHtml(r.folder)}:</strong> ${escapeHtml(msg)}</div>`;
+      const downloadLink =
+        r.status === 'sent' && r.downloadUrl
+          ? ` <a href="${escapeHtml(r.downloadUrl)}" style="color:inherit;font-weight:normal;text-decoration:underline">Download this issue</a>`
+          : '';
+      return `<div class="result ${r.status}"><strong>${escapeHtml(r.folder)}:</strong> ${escapeHtml(msg)}${downloadLink}</div>`;
     })
     .join('\n');
 }
