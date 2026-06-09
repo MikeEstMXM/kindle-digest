@@ -6,7 +6,8 @@ import formbody from '@fastify/formbody';
 import multipart from '@fastify/multipart';
 import type { AppContext } from '../app/context.js';
 import { resolveSettings } from '../app/settings.js';
-import { sendAll, sendFolder, todayIso } from '../digest/service.js';
+import JSZip from 'jszip';
+import { sendAll, sendFolder, buildFolderEpub, buildAllEpubs, todayIso } from '../digest/service.js';
 import { fetchAllFeeds, fetchFeed } from '../rss/fetcher.js';
 import { parseOpml } from '../rss/opml.js';
 import type { DailyScheduler } from '../scheduler/runner.js';
@@ -128,6 +129,43 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
     const dateOverride = /^\d{4}-\d{2}-\d{2}$/.test(b.date ?? '') ? b.date : undefined;
     const results = await sendAll(ctx, dateOverride);
     return reply.type('text/html').send(sendResults(results));
+  });
+
+  // ─── Download ───────────────────────────────────────────────────────────
+  app.get('/download/:folder', async (req, reply) => {
+    const folder = decodeURIComponent((req.params as { folder: string }).folder);
+    const rawDate = (req.query as Record<string, string>).date ?? '';
+    const dateOverride = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : undefined;
+    try {
+      const built = await buildFolderEpub(ctx, folder, dateOverride);
+      if (!built) return reply.code(404).type('text/plain').send('No included articles');
+      return reply
+        .header('Content-Type', 'application/epub+zip')
+        .header('Content-Disposition', `attachment; filename="${built.filename}"`)
+        .send(built.epub);
+    } catch (err) {
+      return reply.code(500).type('text/plain').send(err instanceof Error ? err.message : String(err));
+    }
+  });
+
+  app.get('/download-all', async (req, reply) => {
+    const settings = resolveSettings(ctx.env, ctx.settings);
+    const rawDate = (req.query as Record<string, string>).date ?? '';
+    const dateOverride = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : undefined;
+    const isoDate = dateOverride ?? todayIso(settings.timezone);
+    try {
+      const digests = await buildAllEpubs(ctx, dateOverride);
+      if (digests.length === 0) return reply.code(404).type('text/plain').send('No articles to download');
+      const zip = new JSZip();
+      for (const d of digests) zip.file(d.filename, d.epub);
+      const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+      return reply
+        .header('Content-Type', 'application/zip')
+        .header('Content-Disposition', `attachment; filename="kindle-digest-${isoDate}.zip"`)
+        .send(zipBuffer);
+    } catch (err) {
+      return reply.code(500).type('text/plain').send(err instanceof Error ? err.message : String(err));
+    }
   });
 
   // ─── Feed management ────────────────────────────────────────────────────

@@ -29,6 +29,7 @@ const STYLE = `
   .feed-row .feed-status.error { color:#c00; }
   button { font:inherit; padding:6px 12px; border:1px solid #1a1a1a; background:#1a1a1a; color:#fff; border-radius:6px; cursor:pointer; }
   button.secondary { background:#fff; color:#1a1a1a; }
+  a.btn { font:inherit; font-size:inherit; padding:6px 12px; border:1px solid #1a1a1a; background:#fff; color:#1a1a1a; border-radius:6px; cursor:pointer; text-decoration:none; display:inline-block; }
   button.danger { border-color:#c00; background:#c00; color:#fff; }
   .toggle { padding:4px 10px; font-size:13px; }
   label.field { display:block; margin:12px 0; }
@@ -137,6 +138,7 @@ export function dashboard(date: string, folders: DashboardFolder[]): string {
       return `<section class="folder">
       <h2 style="flex-wrap:wrap; gap:8px">
         <span style="flex:1">${escapeHtml(f.folder)} <span class="muted">(${includedCount}/${f.articles.length} · ${windowLabel})</span></span>
+        <a href="/download/${encodeURIComponent(f.folder)}?date=${escapeHtml(date)}" class="btn">Download</a>
         <button hx-post="/send/${encodeURIComponent(f.folder)}" hx-vals='{"date":"${escapeHtml(date)}"}' hx-target="#send-result" hx-swap="innerHTML">Send now</button>
         <form hx-post="/send/${encodeURIComponent(f.folder)}" hx-target="#send-result" hx-swap="innerHTML" style="display:flex;gap:4px;align-items:center">
           <input type="date" name="date" value="${escapeHtml(date)}" style="font:inherit;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-size:13px" required />
@@ -157,7 +159,10 @@ export function dashboard(date: string, folders: DashboardFolder[]): string {
         <input type="date" name="date" value="${escapeHtml(date)}" style="font:inherit;padding:4px 8px;border:1px solid var(--line);border-radius:6px" />
         <button type="submit" class="secondary" style="padding:4px 10px">Refresh</button>
       </form>
-      <button hx-post="/send-all" hx-vals='{"date":"${escapeHtml(date)}"}' hx-target="#send-result" hx-swap="innerHTML">Send all</button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <a href="/download-all?date=${escapeHtml(date)}" class="btn">Download all</a>
+        <button hx-post="/send-all" hx-vals='{"date":"${escapeHtml(date)}"}' hx-target="#send-result" hx-swap="innerHTML">Send all</button>
+      </div>
     </div>
     <div id="send-result"></div>
     ${sections}`;

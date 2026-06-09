@@ -295,7 +295,7 @@ export async function buildFolderDigest(
   return {
     folder,
     epub,
-    filename: `${safeFolder}-${opts.isoDate}.epub`,
+    filename: `${safeFolder}.epub`,
     itemIds: articles.map((a) => a.itemId),
   };
 }

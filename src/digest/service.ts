@@ -3,8 +3,10 @@ import type { AppContext } from '../app/context.js';
 import { FONTS_DIR } from '../app/context.js';
 import { resolveSettings, assertDeliverable } from '../app/settings.js';
 import { loadFontBuffers } from '../cover/fontLoader.js';
-import { buildFolderDigest } from './orchestrator.js';
+import { buildFolderDigest, type BuiltDigest } from './orchestrator.js';
 import { createTransport, sendEpub } from '../mail/transport.js';
+
+export type { BuiltDigest };
 
 export interface FolderSendResult {
   folder: string;
@@ -18,17 +20,13 @@ export function todayIso(timezone: string): string {
   return DateTime.now().setZone(timezone).toISODate()!;
 }
 
-/**
- * Build + send the digest for a single folder: fetch unread, drop excluded,
- * generate the EPUB, email it, then mark those items read.
- */
-export async function sendFolder(
+/** Build the EPUB for one folder without sending. Returns null if there are no included articles. */
+export async function buildFolderEpub(
   ctx: AppContext,
   folder: string,
-  dateOverride?: string, // ISO date e.g. "2026-06-07"; defaults to today
-): Promise<FolderSendResult> {
+  dateOverride?: string,
+): Promise<BuiltDigest | null> {
   const settings = resolveSettings(ctx.env, ctx.settings);
-  const delivery = assertDeliverable(settings);
   const isoDate = dateOverride ?? todayIso(settings.timezone);
 
   const folderCfg = ctx.folderSettings.get(folder);
@@ -52,11 +50,9 @@ export async function sendFolder(
       return (b.publishedMs ?? 0) - (a.publishedMs ?? 0);
     });
 
-  if (included.length === 0) {
-    return { folder, articleCount: 0, status: 'skipped', message: 'No included articles' };
-  }
+  if (included.length === 0) return null;
 
-  const built = await buildFolderDigest(
+  return buildFolderDigest(
     folder,
     included,
     all.length,
@@ -68,6 +64,39 @@ export async function sendFolder(
     },
     ctx.runLog,
   );
+}
+
+/** Build EPUBs for all folders that have included articles. */
+export async function buildAllEpubs(
+  ctx: AppContext,
+  dateOverride?: string,
+): Promise<BuiltDigest[]> {
+  const folders = await ctx.readerClient().getFolders();
+  const results: BuiltDigest[] = [];
+  for (const folder of folders) {
+    const built = await buildFolderEpub(ctx, folder, dateOverride);
+    if (built) results.push(built);
+  }
+  return results;
+}
+
+/**
+ * Build + send the digest for a single folder: fetch unread, drop excluded,
+ * generate the EPUB, email it, then mark those items read.
+ */
+export async function sendFolder(
+  ctx: AppContext,
+  folder: string,
+  dateOverride?: string,
+): Promise<FolderSendResult> {
+  const settings = resolveSettings(ctx.env, ctx.settings);
+  const delivery = assertDeliverable(settings);
+  const isoDate = dateOverride ?? todayIso(settings.timezone);
+
+  const built = await buildFolderEpub(ctx, folder, dateOverride);
+  if (!built) {
+    return { folder, articleCount: 0, status: 'skipped', message: 'No included articles' };
+  }
 
   const transport = createTransport(delivery);
   await sendEpub(
@@ -78,7 +107,7 @@ export async function sendFolder(
     { filename: built.filename, content: built.epub },
   );
 
-  return { folder, articleCount: included.length, status: 'sent' };
+  return { folder, articleCount: built.itemIds.length, status: 'sent' };
 }
 
 /** Build + send digests for every top-level folder that has included articles. */
