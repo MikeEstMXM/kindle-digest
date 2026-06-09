@@ -123,8 +123,10 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
     }
   });
 
-  app.post('/send-all', async (_req, reply) => {
-    const results = await sendAll(ctx);
+  app.post('/send-all', async (req, reply) => {
+    const b = req.body as Record<string, string>;
+    const dateOverride = /^\d{4}-\d{2}-\d{2}$/.test(b.date ?? '') ? b.date : undefined;
+    const results = await sendAll(ctx, dateOverride);
     return reply.type('text/html').send(sendResults(results));
   });
 

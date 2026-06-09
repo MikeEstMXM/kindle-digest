@@ -82,13 +82,13 @@ export async function sendFolder(
 }
 
 /** Build + send digests for every top-level folder that has included articles. */
-export async function sendAll(ctx: AppContext): Promise<FolderSendResult[]> {
+export async function sendAll(ctx: AppContext, dateOverride?: string): Promise<FolderSendResult[]> {
   const client = ctx.readerClient();
   const folders = await client.getFolders();
   const results: FolderSendResult[] = [];
   for (const folder of folders) {
     try {
-      results.push(await sendFolder(ctx, folder));
+      results.push(await sendFolder(ctx, folder, dateOverride));
     } catch (err) {
       results.push({
         folder,
