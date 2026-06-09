@@ -77,7 +77,11 @@ export function buildRecipeDir(
   );
   writeFileSync(join(dir, 'cover.jpg'), coverJpeg);
   writeFileSync(join(dir, 'masthead.jpg'), mastheadJpeg);
-  writeFileSync(join(dir, 'digest.recipe'), buildRecipePython(join(dir, 'masthead.jpg')), 'utf-8');
+  writeFileSync(
+    join(dir, 'digest.recipe'),
+    buildRecipePython(join(dir, 'manifest.json'), join(dir, 'masthead.jpg')),
+    'utf-8',
+  );
 
   return dir;
 }
@@ -98,11 +102,11 @@ function buildArticleHtml(art: CalibreArticle, dateStr: string): string {
 </html>`;
 }
 
-function buildRecipePython(mastheadPath: string): string {
-  return `import json, os
+function buildRecipePython(manifestPath: string, mastheadPath: string): string {
+  return `import json
 from calibre.web.feeds.news import BasicNewsRecipe
 
-_MANIFEST = json.load(open(os.path.join(os.path.dirname(os.path.abspath(__file__)), 'manifest.json')))
+_MANIFEST = json.load(open(${JSON.stringify(manifestPath)}))
 
 class KindleDigest(BasicNewsRecipe):
     title             = _MANIFEST['folder']
