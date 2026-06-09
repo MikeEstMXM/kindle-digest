@@ -35,12 +35,12 @@ export interface EpubFeedGroup {
 
 export interface EpubInput {
   identifier: string;
+  /** Publication name only — no date in the title. */
   title: string;
   author: string;
   language?: string;
-  /** ISO date string; series index. */
+  /** ISO date string. */
   date: string;
-  series: { name: string; index: string };
   coverXhtml: string;
   tocXhtml: string;
   articles: EpubArticle[];
@@ -169,13 +169,13 @@ export async function buildEpub(input: EpubInput): Promise<Buffer> {
     author: input.author,
     date: input.date,
     modified,
-    series: input.series,
     manifest,
     spine,
     ncxId: input.ncxXml ? NCX_ID : undefined,
     guide:
       hasMasthead && firstArticleFilename
         ? {
+            coverHref: 'cover.xhtml',
             mastheadHref: 'images/masthead.jpg',
             tocHref: 'toc.xhtml',
             startHref: firstArticleFilename,

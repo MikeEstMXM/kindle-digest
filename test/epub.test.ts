@@ -5,10 +5,9 @@ import { buildEpub, buildManifestAndSpine, type EpubInput } from '../src/epub/wr
 function sampleInput(): EpubInput {
   return {
     identifier: 'urn:kindle-digest:Technology:2026-06-07',
-    title: 'Technology — Saturday 2026-06-07',
+    title: 'Technology',
     author: 'Kindle Digest',
     date: '2026-06-07',
-    series: { name: 'Technology', index: '20260607' },
     coverXhtml: '<?xml version="1.0"?><html><body>cover</body></html>',
     tocXhtml: '<?xml version="1.0"?><html><body>toc</body></html>',
     articles: [
@@ -47,17 +46,15 @@ describe('buildEpub', () => {
     expect(head).toContain('application/epub+zip');
   });
 
-  it('writes series metadata: name=folder, index=ISO date (both EPUB3 + calibre)', async () => {
+  it('sets dc:type=magazine and bare publication title (no date in title)', async () => {
     const buf = await buildEpub(sampleInput());
     const zip = await JSZip.loadAsync(buf);
     const opf = await zip.file('OEBPS/content.opf')!.async('string');
 
-    expect(opf).toContain('property="belongs-to-collection"');
-    expect(opf).toMatch(/belongs-to-collection"[^>]*>Technology<\/meta>/);
-    expect(opf).toContain('property="collection-type">series');
-    expect(opf).toContain('property="group-position">20260607');
-    expect(opf).toContain('name="calibre:series" content="Technology"');
-    expect(opf).toContain('name="calibre:series_index" content="20260607"');
+    expect(opf).toContain('<dc:type>magazine</dc:type>');
+    expect(opf).toContain('<dc:title>Technology</dc:title>');
+    expect(opf).not.toContain('belongs-to-collection');
+    expect(opf).not.toContain('calibre:series');
   });
 
   it('includes all expected files and an itemref spine in order', async () => {

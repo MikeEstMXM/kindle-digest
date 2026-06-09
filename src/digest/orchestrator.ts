@@ -21,6 +21,11 @@ import type { LoadedFont } from '../cover/fontLoader.js';
 import { buildNcx } from '../epub/ncx.js';
 import { buildMasthead } from '../epub/masthead.js';
 import { buildSectionIndexPage } from '../epub/sectionIndex.js';
+import { htmlToText } from '../util/html.js';
+
+const MAX_IMAGES_PER_ARTICLE = 5;
+// Gallery threshold: more than 1 image per 100 words with at least 6 images → skip all images.
+const GALLERY_IMAGE_RATIO = 100;
 
 export interface BuildOptions {
   isoDate: string;
@@ -145,8 +150,23 @@ export async function buildFolderDigest(
     images.push({ href: qrHref, data: qr, mediaType: 'image/png' });
 
     // Download + embed inline article images; substitute or strip placeholders.
+    // Cap images per article; skip all images for gallery-type pages.
+    const wordCount = htmlToText(r.bodyXhtml).split(/\s+/).filter(Boolean).length;
+    const isGallery =
+      r.imageUrls.length > MAX_IMAGES_PER_ARTICLE &&
+      r.imageUrls.length * GALLERY_IMAGE_RATIO > wordCount;
+    const imageLimit = isGallery ? 0 : MAX_IMAGES_PER_ARTICLE;
+
     let bodyXhtml = r.bodyXhtml;
     for (let i = 0; i < r.imageUrls.length; i++) {
+      if (i >= imageLimit) {
+        // Strip placeholder — beyond cap or gallery page.
+        bodyXhtml = bodyXhtml.replace(
+          new RegExp(`<img[^>]*src="%%img-${i}%%"[^>]*\\/>`, 'g'),
+          '',
+        );
+        continue;
+      }
       const imgHref = `images/art-${idx}-img-${i}.jpg`;
       try {
         const raw = await downloadImage(r.imageUrls[i], opts.fetchImage ?? fetch);
@@ -154,7 +174,6 @@ export async function buildFolderDigest(
         images.push({ href: imgHref, data: processed.jpeg, mediaType: 'image/jpeg' });
         bodyXhtml = bodyXhtml.replace(`%%img-${i}%%`, imgHref);
       } catch {
-        // Remove the unresolved img element
         bodyXhtml = bodyXhtml.replace(
           new RegExp(`<img[^>]*src="%%img-${i}%%"[^>]*\\/>`, 'g'),
           '',
@@ -257,10 +276,9 @@ export async function buildFolderDigest(
 
   const epub = await buildEpub({
     identifier: `urn:kindle-digest:${folder}:${opts.isoDate}`,
-    title: `${folder} — ${weekday} ${opts.isoDate}`,
+    title: folder,
     author: opts.author ?? 'Kindle Digest',
     date: opts.isoDate,
-    series: { name: folder, index: opts.isoDate.replace(/-/g, '') },
     coverXhtml: cover.xhtml,
     tocXhtml,
     articles: epubArticles,

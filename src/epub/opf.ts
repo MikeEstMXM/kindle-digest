@@ -8,6 +8,7 @@ export interface ManifestItem {
 }
 
 export interface OpfGuide {
+  coverHref: string;
   mastheadHref: string;
   tocHref: string;
   startHref: string;
@@ -15,14 +16,13 @@ export interface OpfGuide {
 
 export interface OpfInput {
   identifier: string;
+  /** Publication name only — no date. Kindle keys issue stacking on this value. */
   title: string;
   language: string;
   author: string;
   /** ISO date string. */
   date: string;
   modified: string; // ISO 8601 dcterms:modified
-  /** index must be a numeric string (YYYYMMDD) — Kindle requires numeric group-position for series stacking. */
-  series: { name: string; index: string };
   manifest: ManifestItem[];
   /** Ordered list of manifest ids forming the reading order. */
   spine: string[];
@@ -51,6 +51,7 @@ export function buildOpf(input: OpfInput): string {
 
   const guideXml = input.guide
     ? `  <guide>
+    <reference type="cover" href="${escapeHtml(input.guide.coverHref)}" title="Cover"/>
     <reference type="masthead" href="${escapeHtml(input.guide.mastheadHref)}" title="Masthead"/>
     <reference type="toc" href="${escapeHtml(input.guide.tocHref)}" title="Table of Contents"/>
     <reference type="start" href="${escapeHtml(input.guide.startHref)}" title="Start"/>
@@ -67,11 +68,6 @@ export function buildOpf(input: OpfInput): string {
     <dc:date>${escapeHtml(input.date)}</dc:date>
     <dc:type>magazine</dc:type>
     <meta property="dcterms:modified">${escapeHtml(input.modified)}</meta>
-    <meta property="belongs-to-collection" id="series-id">${escapeHtml(input.series.name)}</meta>
-    <meta refines="#series-id" property="collection-type">series</meta>
-    <meta refines="#series-id" property="group-position">${escapeHtml(input.series.index)}</meta>
-    <meta name="calibre:series" content="${escapeHtml(input.series.name)}" />
-    <meta name="calibre:series_index" content="${escapeHtml(input.series.index)}" />
   </metadata>
   <manifest>
 ${manifestXml}
