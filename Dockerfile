@@ -2,9 +2,10 @@
 FROM node:22-bookworm-slim
 
 # Build deps for native modules (better-sqlite3) + runtime libs for sharp.
-# fonts-liberation provides Liberation Serif/Sans as fallback for SVG cover overlay.
+# calibre: ebook-convert for periodical EPUB generation.
+# fonts-liberation: SVG cover overlay fallback fonts.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    python3 make g++ ca-certificates fonts-liberation \
+    python3 make g++ ca-certificates fonts-liberation calibre \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
@@ -25,7 +26,8 @@ RUN npm run fetch-fonts
 # Default runtime config. Override secrets via Fly secrets / env.
 ENV NODE_ENV=production \
     PORT=3000 \
-    DATABASE_PATH=/data/kindle-digest.sqlite
+    DATABASE_PATH=/data/kindle-digest.sqlite \
+    CALIBRE_NO_NATIVE_DISPLAY=1
 
 EXPOSE 3000
 VOLUME ["/data"]

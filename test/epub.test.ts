@@ -54,8 +54,7 @@ describe('buildEpub', () => {
 
     expect(opf).toContain('property="belongs-to-collection"');
     expect(opf).toMatch(/belongs-to-collection"[^>]*>Technology<\/meta>/);
-    expect(opf).toContain('property="collection-type">periodical');
-    expect(opf).toContain('<dc:type>Magazine</dc:type>');
+    expect(opf).toContain('property="collection-type">series');
     expect(opf).toContain('property="group-position">20260607');
     expect(opf).toContain('name="calibre:series" content="Technology"');
     expect(opf).toContain('name="calibre:series_index" content="20260607"');
