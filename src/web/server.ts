@@ -1,6 +1,5 @@
 import { createRequire } from 'node:module';
-import { readFileSync, existsSync } from 'node:fs';
-import { join } from 'node:path';
+import { readFileSync } from 'node:fs';
 import Fastify, { type FastifyInstance } from 'fastify';
 import formbody from '@fastify/formbody';
 import multipart from '@fastify/multipart';
@@ -200,31 +199,6 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
     }
     if (added > 0) void fetchAllFeeds(ctx.feeds, ctx.articles);
     return reply.redirect('/feeds');
-  });
-
-  // ─── Digest download (Kindle browser sideload) ──────────────────────────
-  app.get('/digests/:folder/latest', async (req, reply) => {
-    const safe = decodeURIComponent((req.params as { folder: string }).folder)
-      .replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-    const filePath = join('/data/digests', `${safe}-latest.azw3`);
-    if (!existsSync(filePath))
-      return reply.status(404).type('text/plain').send('No digest found. Send one first.');
-    return reply.type('application/vnd.amazon.mobi8-ebook')
-      .header('Content-Disposition', `attachment; filename="${safe}-latest.azw3"`)
-      .send(readFileSync(filePath));
-  });
-
-  app.get('/digests/:folder/:date', async (req, reply) => {
-    const { folder, date } = req.params as { folder: string; date: string };
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date))
-      return reply.status(400).type('text/plain').send('Invalid date');
-    const safe = decodeURIComponent(folder).replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-    const filePath = join('/data/digests', `${safe}-${date}.azw3`);
-    if (!existsSync(filePath))
-      return reply.status(404).type('text/plain').send(`No digest found for ${date}. Send one first.`);
-    return reply.type('application/vnd.amazon.mobi8-ebook')
-      .header('Content-Disposition', `attachment; filename="${safe}-${date}.azw3"`)
-      .send(readFileSync(filePath));
   });
 
   // ─── Settings ───────────────────────────────────────────────────────────

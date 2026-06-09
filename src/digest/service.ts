@@ -1,5 +1,3 @@
-import { writeFileSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
 import { DateTime } from 'luxon';
 import type { AppContext } from '../app/context.js';
 import { FONTS_DIR } from '../app/context.js';
@@ -13,8 +11,6 @@ export interface FolderSendResult {
   articleCount: number;
   status: 'sent' | 'skipped' | 'error';
   message?: string;
-  /** URL to download this specific issue after sending. */
-  downloadUrl?: string;
 }
 
 /** Today's ISO date in the configured timezone. */
@@ -73,17 +69,6 @@ export async function sendFolder(
     ctx.runLog,
   );
 
-  // Persist to disk: both a dated file and the rolling "latest" alias.
-  const safeFolder = folder.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
-  try {
-    const digestsDir = '/data/digests';
-    mkdirSync(digestsDir, { recursive: true });
-    writeFileSync(join(digestsDir, `${safeFolder}-${isoDate}.azw3`), built.epub);
-    writeFileSync(join(digestsDir, `${safeFolder}-latest.azw3`), built.epub);
-  } catch {
-    // Non-fatal: storage write failure should not block email delivery.
-  }
-
   const transport = createTransport(delivery);
   await sendEpub(
     transport,
@@ -93,12 +78,7 @@ export async function sendFolder(
     { filename: built.filename, content: built.epub },
   );
 
-  return {
-    folder,
-    articleCount: included.length,
-    status: 'sent',
-    downloadUrl: `/digests/${encodeURIComponent(folder)}/${isoDate}`,
-  };
+  return { folder, articleCount: included.length, status: 'sent' };
 }
 
 /** Build + send digests for every top-level folder that has included articles. */

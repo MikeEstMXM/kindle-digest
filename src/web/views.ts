@@ -132,22 +132,16 @@ export function dashboard(date: string, folders: DashboardFolder[]): string {
         )
         .join('\n');
       const windowLabel = f.cadence === 'weekly' ? 'last 7 days' : 'last 24h';
-      const excludedCount = f.articles.length - includedCount;
-      const summaryLabel = `${includedCount} included${excludedCount ? `, ${excludedCount} excluded` : ''} — tap to review`;
       return `<section class="folder">
       <h2 style="flex-wrap:wrap; gap:8px">
         <span style="flex:1">${escapeHtml(f.folder)} <span class="muted">(${includedCount}/${f.articles.length} · ${windowLabel})</span></span>
         <button hx-post="/send/${encodeURIComponent(f.folder)}" hx-target="#send-result" hx-swap="innerHTML">Send now</button>
-        <a href="/digests/${encodeURIComponent(f.folder)}/latest" class="secondary" style="padding:6px 12px;border:1px solid #1a1a1a;border-radius:6px;font-size:13px;text-decoration:none;color:#1a1a1a">Download</a>
         <form hx-post="/send/${encodeURIComponent(f.folder)}" hx-target="#send-result" hx-swap="innerHTML" style="display:flex;gap:4px;align-items:center">
           <input type="date" name="date" style="font:inherit;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-size:13px" required />
           <button type="submit" class="secondary" style="padding:4px 8px;font-size:13px">Send date</button>
         </form>
       </h2>
-      <details>
-        <summary style="padding:8px 16px;cursor:pointer;font-size:13px;color:var(--muted);border-top:1px solid #f0f0f0;list-style:none;user-select:none">${summaryLabel}</summary>
-        ${rows}
-      </details>
+      ${rows}
     </section>`;
     })
     .join('\n');
@@ -169,11 +163,7 @@ export function sendResults(results: FolderSendResult[]): string {
           : r.status === 'skipped'
             ? r.message ?? 'Skipped.'
             : `Error: ${r.message ?? 'unknown'}`;
-      const downloadLink =
-        r.status === 'sent' && r.downloadUrl
-          ? ` <a href="${escapeHtml(r.downloadUrl)}" style="color:inherit;font-weight:normal;text-decoration:underline">Download this issue</a>`
-          : '';
-      return `<div class="result ${r.status}"><strong>${escapeHtml(r.folder)}:</strong> ${escapeHtml(msg)}${downloadLink}</div>`;
+      return `<div class="result ${r.status}"><strong>${escapeHtml(r.folder)}:</strong> ${escapeHtml(msg)}</div>`;
     })
     .join('\n');
 }
