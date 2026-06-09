@@ -13,7 +13,6 @@ export async function buildCalibreEpub(recipeDir: string): Promise<Buffer> {
   const recipePath = join(recipeDir, 'digest.recipe');
   const outputPath = join(recipeDir, 'output.epub');
   const coverPath = join(recipeDir, 'cover.jpg');
-  const mastheadPath = join(recipeDir, 'masthead.jpg');
 
   try {
     const { stderr } = await execFileAsync(
@@ -23,7 +22,6 @@ export async function buildCalibreEpub(recipeDir: string): Promise<Buffer> {
         outputPath,
         '--output-profile', 'kindle',
         '--cover', coverPath,
-        '--masthead-image', mastheadPath,
       ],
       {
         env: { ...process.env, CALIBRE_NO_NATIVE_DISPLAY: '1' },

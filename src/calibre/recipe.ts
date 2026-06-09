@@ -77,7 +77,7 @@ export function buildRecipeDir(
   );
   writeFileSync(join(dir, 'cover.jpg'), coverJpeg);
   writeFileSync(join(dir, 'masthead.jpg'), mastheadJpeg);
-  writeFileSync(join(dir, 'digest.recipe'), buildRecipePython(), 'utf-8');
+  writeFileSync(join(dir, 'digest.recipe'), buildRecipePython(join(dir, 'masthead.jpg')), 'utf-8');
 
   return dir;
 }
@@ -98,7 +98,7 @@ function buildArticleHtml(art: CalibreArticle, dateStr: string): string {
 </html>`;
 }
 
-function buildRecipePython(): string {
+function buildRecipePython(mastheadPath: string): string {
   return `import json, os
 from calibre.web.feeds.news import BasicNewsRecipe
 
@@ -108,6 +108,7 @@ class KindleDigest(BasicNewsRecipe):
     title             = _MANIFEST['folder']
     __author__        = 'Kindle Digest'
     publication_type  = 'magazine'
+    masthead_url      = r'${mastheadPath}'
     oldest_article    = 7
     max_articles_per_feed = 200
     no_stylesheets    = True
