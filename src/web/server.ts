@@ -140,7 +140,7 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
       const built = await buildFolderEpub(ctx, folder, dateOverride);
       if (!built) return reply.code(404).type('text/plain').send('No included articles');
       return reply
-        .header('Content-Type', 'application/x-mobipocket-ebook')
+        .header('Content-Type', 'application/epub+zip')
         .header('Content-Disposition', `attachment; filename="${built.filename}"`)
         .send(built.epub);
     } catch (err) {

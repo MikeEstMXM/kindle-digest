@@ -43,7 +43,7 @@ export async function sendEpub(
       {
         filename: attachment.filename,
         content: attachment.content,
-        contentType: 'application/x-mobipocket-ebook',
+        contentType: 'application/epub+zip',
       },
     ],
   });
