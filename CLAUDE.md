@@ -113,7 +113,7 @@ your feeds.
 - **Kindle sender whitelist:** the SMTP `from` address MUST be added to
   Amazon's *Approved Personal Document E-mail List*, or delivery is silently
   dropped. Surfaced prominently in the README — keep it there.
-- **EPUB only.** Amazon deprecated MOBI for Send to Kindle (2022). Never emit MOBI.
+- **Format:** Currently emitting `.mobi` (renamed EPUB bytes) to verify Amazon rejection behaviour. Switch back to `.epub` + `application/epub+zip` after testing.
 - **Full text is always required.** Never fall back to a truncated excerpt.
   If extraction fails (paywall / JS-rendered / HTTP error), include the
   article with an inline error notice — never silently drop it.
