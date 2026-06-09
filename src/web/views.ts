@@ -133,8 +133,13 @@ export function dashboard(date: string, folders: DashboardFolder[]): string {
         .join('\n');
       const windowLabel = f.cadence === 'weekly' ? 'last 7 days' : 'last 24h';
       return `<section class="folder">
-      <h2><span>${escapeHtml(f.folder)} <span class="muted">(${includedCount}/${f.articles.length} · ${windowLabel})</span></span>
+      <h2 style="flex-wrap:wrap; gap:8px">
+        <span style="flex:1">${escapeHtml(f.folder)} <span class="muted">(${includedCount}/${f.articles.length} · ${windowLabel})</span></span>
         <button hx-post="/send/${encodeURIComponent(f.folder)}" hx-target="#send-result" hx-swap="innerHTML">Send now</button>
+        <form hx-post="/send/${encodeURIComponent(f.folder)}" hx-target="#send-result" hx-swap="innerHTML" style="display:flex;gap:4px;align-items:center">
+          <input type="date" name="date" style="font:inherit;padding:4px 6px;border:1px solid var(--line);border-radius:6px;font-size:13px" required />
+          <button type="submit" class="secondary" style="padding:4px 8px;font-size:13px">Send date</button>
+        </form>
       </h2>
       ${rows}
     </section>`;

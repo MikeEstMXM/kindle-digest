@@ -103,8 +103,10 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
   // ─── Manual send ────────────────────────────────────────────────────────
   app.post('/send/:folder', async (req, reply) => {
     const folder = decodeURIComponent((req.params as { folder: string }).folder);
+    const b = req.body as Record<string, string>;
+    const dateOverride = /^\d{4}-\d{2}-\d{2}$/.test(b.date ?? '') ? b.date : undefined;
     try {
-      const result = await sendFolder(ctx, folder);
+      const result = await sendFolder(ctx, folder, dateOverride);
       return reply.type('text/html').send(sendResults([result]));
     } catch (err) {
       return reply.type('text/html').send(

@@ -22,14 +22,24 @@ export function todayIso(timezone: string): string {
  * Build + send the digest for a single folder: fetch unread, drop excluded,
  * generate the EPUB, email it, then mark those items read.
  */
-export async function sendFolder(ctx: AppContext, folder: string): Promise<FolderSendResult> {
+export async function sendFolder(
+  ctx: AppContext,
+  folder: string,
+  dateOverride?: string, // ISO date e.g. "2026-06-07"; defaults to today
+): Promise<FolderSendResult> {
   const settings = resolveSettings(ctx.env, ctx.settings);
   const delivery = assertDeliverable(settings);
-  const isoDate = todayIso(settings.timezone);
+  const isoDate = dateOverride ?? todayIso(settings.timezone);
 
   const folderCfg = ctx.folderSettings.get(folder);
   const windowMs = folderCfg.cadence === 'weekly' ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-  const sinceMs = Date.now() - windowMs;
+
+  // Anchor the window to the END of the target date (midnight of the next day)
+  // so retroactive digests include articles published on that date.
+  const anchorMs = DateTime.fromISO(isoDate, { zone: settings.timezone })
+    .plus({ days: 1 })
+    .toMillis();
+  const sinceMs = anchorMs - windowMs;
 
   const client = ctx.readerClient();
   const all = await client.getRecentByFolder(folder, sinceMs);
