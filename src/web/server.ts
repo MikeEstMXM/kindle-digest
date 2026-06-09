@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
+import { DateTime } from 'luxon';
 import Fastify, { type FastifyInstance } from 'fastify';
 import formbody from '@fastify/formbody';
 import multipart from '@fastify/multipart';
@@ -47,24 +48,29 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
   });
 
   // ─── Dashboard ──────────────────────────────────────────────────────────
-  app.get('/', async (_req, reply) => {
+  app.get('/', async (req, reply) => {
     const settings = resolveSettings(ctx.env, ctx.settings);
-    const date = todayIso(settings.timezone);
+    const today = todayIso(settings.timezone);
+    const rawDate = (req.query as Record<string, string>).date ?? '';
+    const viewDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : today;
+
     const folders = ctx.feeds.folders();
     if (folders.length === 0) {
-      return reply
-        .type('text/html')
-        .send(layout('Dashboard', noFeedsPrompt()));
+      return reply.type('text/html').send(layout('Dashboard', noFeedsPrompt()));
     }
     try {
       const client = ctx.readerClient();
       const view: DashboardFolder[] = [];
+      // Anchor article window to end of viewDate so past-date views show the right articles.
+      const anchorMs = DateTime.fromISO(viewDate, { zone: settings.timezone })
+        .plus({ days: 1 })
+        .toMillis();
       for (const folder of folders) {
         const fs = ctx.folderSettings.get(folder);
         const windowMs = fs.cadence === 'weekly' ? 7 * 24 * 60 * 60 * 1000 : 24 * 60 * 60 * 1000;
-        const allArticles = await client.getRecentByFolder(folder, Date.now() - windowMs);
+        const allArticles = await client.getRecentByFolder(folder, anchorMs - windowMs);
         if (allArticles.length === 0) continue;
-        const excluded = ctx.selection.excludedIds(date);
+        const excluded = ctx.selection.excludedIds(viewDate);
         const included = allArticles.filter((a) => !excluded.has(a.itemId));
         const excluded2 = allArticles.filter((a) => excluded.has(a.itemId));
         view.push({
@@ -76,7 +82,7 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
           })),
         });
       }
-      return reply.type('text/html').send(layout('Dashboard', dashboard(date, view)));
+      return reply.type('text/html').send(layout('Dashboard', dashboard(viewDate, view)));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return reply.type('text/html').send(layout('Dashboard', noFeedsPrompt(msg)));
