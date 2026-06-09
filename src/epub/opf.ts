@@ -30,11 +30,14 @@ export interface OpfInput {
   ncxId?: string;
   /** If present, a <guide> element is added for Kindle periodical metadata. */
   guide?: OpfGuide;
+  /** If present, emits EPUB3 belongs-to-collection + calibre series meta for Kindle grouping. */
+  series?: { name: string; index: string };
 }
 
 /**
- * Build content.opf. Includes EPUB3 series metadata plus NCX spine reference
- * and guide element for Kindle periodical navigation when provided.
+ * Build content.opf. Emits EPUB3 series metadata (belongs-to-collection + calibre fallback)
+ * when input.series is provided, plus NCX spine reference and guide element for Kindle
+ * periodical navigation when provided.
  */
 export function buildOpf(input: OpfInput): string {
   const manifestXml = input.manifest
@@ -58,6 +61,14 @@ export function buildOpf(input: OpfInput): string {
   </guide>`
     : '';
 
+  const seriesXml = input.series
+    ? `    <meta property="belongs-to-collection" id="c01">${escapeHtml(input.series.name)}</meta>
+    <meta refines="#c01" property="collection-type">series</meta>
+    <meta refines="#c01" property="group-position">${escapeHtml(input.series.index)}</meta>
+    <meta name="calibre:series" content="${escapeHtml(input.series.name)}"/>
+    <meta name="calibre:series_index" content="${escapeHtml(input.series.index)}"/>`
+    : '';
+
   return `<?xml version="1.0" encoding="utf-8"?>
 <package xmlns="http://www.idpf.org/2007/opf" version="3.0" unique-identifier="pub-id">
   <metadata xmlns:dc="http://purl.org/dc/elements/1.1/">
@@ -68,6 +79,7 @@ export function buildOpf(input: OpfInput): string {
     <dc:date>${escapeHtml(input.date)}</dc:date>
     <dc:type>magazine</dc:type>
     <meta property="dcterms:modified">${escapeHtml(input.modified)}</meta>
+${seriesXml}
   </metadata>
   <manifest>
 ${manifestXml}

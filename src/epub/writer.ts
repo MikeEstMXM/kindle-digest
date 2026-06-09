@@ -51,6 +51,8 @@ export interface EpubInput {
   feedGroups?: EpubFeedGroup[];
   /** Pre-built NCX 2.0 XML string for Kindle periodical navigation. */
   ncxXml?: string;
+  /** Series name + index for Kindle collection grouping (belongs-to-collection). */
+  series?: { name: string; index: string };
 }
 
 const COVER_ID = 'cover-page';
@@ -171,6 +173,7 @@ export async function buildEpub(input: EpubInput): Promise<Buffer> {
     modified,
     manifest,
     spine,
+    series: input.series,
     ncxId: input.ncxXml ? NCX_ID : undefined,
     guide:
       hasMasthead && firstArticleFilename
