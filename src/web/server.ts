@@ -1,5 +1,6 @@
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { readFileSync, existsSync } from 'node:fs';
+import { join } from 'node:path';
 import Fastify, { type FastifyInstance } from 'fastify';
 import formbody from '@fastify/formbody';
 import multipart from '@fastify/multipart';
@@ -199,6 +200,21 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
     }
     if (added > 0) void fetchAllFeeds(ctx.feeds, ctx.articles);
     return reply.redirect('/feeds');
+  });
+
+  // ─── Digest download (Kindle browser sideload) ──────────────────────────
+  app.get('/digests/:folder/latest', async (req, reply) => {
+    const folder = decodeURIComponent((req.params as { folder: string }).folder);
+    const safeFolder = folder.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+    const filePath = join('/data/digests', `${safeFolder}-latest.azw3`);
+    if (!existsSync(filePath)) {
+      return reply.status(404).type('text/plain').send('No digest found for this folder. Send one first.');
+    }
+    const buf = readFileSync(filePath);
+    return reply
+      .type('application/vnd.amazon.mobi8-ebook')
+      .header('Content-Disposition', `attachment; filename="${safeFolder}-latest.azw3"`)
+      .send(buf);
   });
 
   // ─── Settings ───────────────────────────────────────────────────────────

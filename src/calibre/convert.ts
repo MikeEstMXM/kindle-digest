@@ -11,7 +11,7 @@ const execFileAsync = promisify(execFile);
  */
 export async function buildCalibreEpub(recipeDir: string): Promise<Buffer> {
   const recipePath = join(recipeDir, 'digest.recipe');
-  const outputPath = join(recipeDir, 'output.epub');
+  const outputPath = join(recipeDir, 'output.azw3');
   const coverPath = join(recipeDir, 'cover.jpg');
 
   try {

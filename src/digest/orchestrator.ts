@@ -141,7 +141,7 @@ export async function buildFolderDigest(
   return {
     folder,
     epub,
-    filename: `${safeFolder}-${opts.isoDate}.epub`,
+    filename: `${safeFolder}-${opts.isoDate}.azw3`,
     itemIds: articles.map((a) => a.itemId),
   };
 }

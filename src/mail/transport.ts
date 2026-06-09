@@ -43,7 +43,7 @@ export async function sendEpub(
       {
         filename: attachment.filename,
         content: attachment.content,
-        contentType: 'application/epub+zip',
+        contentType: 'application/vnd.amazon.mobi8-ebook',
       },
     ],
   });

@@ -1,3 +1,5 @@
+import { writeFileSync, mkdirSync } from 'node:fs';
+import { join } from 'node:path';
 import { DateTime } from 'luxon';
 import type { AppContext } from '../app/context.js';
 import { FONTS_DIR } from '../app/context.js';
@@ -68,6 +70,16 @@ export async function sendFolder(
     },
     ctx.runLog,
   );
+
+  // Persist the latest digest to disk so the download endpoint can serve it.
+  try {
+    const digestsDir = '/data/digests';
+    mkdirSync(digestsDir, { recursive: true });
+    const safeFolder = folder.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+    writeFileSync(join(digestsDir, `${safeFolder}-latest.azw3`), built.epub);
+  } catch {
+    // Non-fatal: storage write failure should not block email delivery.
+  }
 
   const transport = createTransport(delivery);
   await sendEpub(
