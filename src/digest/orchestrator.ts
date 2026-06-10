@@ -62,15 +62,23 @@ async function resolveContent(
   fetchPage?: PageFetcher,
 ): Promise<ResolvedArticle> {
   const started = Date.now();
-  // Image-only comics (XKCD, SMBC) have near-zero text in their feed entry;
-  // the <img> IS the full article. Bypass Readability for these.
+  // Image-primary comics (XKCD, SMBC) have an <img> and short surrounding text
+  // (hovertext / "click for bonus panel"). The feed content IS the full article.
+  // Threshold 350: covers SMBC's longest hover-text jokes without misclassifying
+  // real text articles (which typically provide ≥400-char excerpts in the feed).
   const hasImages = /<img\b/i.test(article.contentHtml);
-  const isImageOnly = hasImages && article.contentTextLength < 100;
+  const isImageOnly = hasImages && article.contentTextLength < 350;
   if (contentIsFull(article, minChars) || isImageOnly) {
     const { xhtml, imageUrls } = sanitizeArticleHtml(article.contentHtml);
     return { article, source: 'feed', failureReason: null, bodyXhtml: xhtml, imageUrls, extractMs: Date.now() - started };
   }
   const result = await extractFullText(article.url, fetchPage);
+  // Safety net: if Readability failed and the feed already has an image, the
+  // feed content is the best we have (image-primary page Readability can't parse).
+  if (result.failureReason !== null && hasImages) {
+    const { xhtml, imageUrls } = sanitizeArticleHtml(article.contentHtml);
+    return { article, source: 'feed', failureReason: null, bodyXhtml: xhtml, imageUrls, extractMs: Date.now() - started };
+  }
   const { xhtml, imageUrls } = sanitizeArticleHtml(result.html);
   return { article, source: 'readability', failureReason: result.failureReason, bodyXhtml: xhtml, imageUrls, extractMs: Date.now() - started };
 }
