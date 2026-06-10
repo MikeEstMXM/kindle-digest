@@ -29,8 +29,8 @@ export interface RenderedCover {
  * photo) is pre-composited into images/cover.jpg by buildCoverJpeg; this page
  * simply displays that JPEG full-bleed.
  */
-export function renderCover(input: CoverInput): RenderedCover {
-  const templateId = templateFor(input.folder);
+export function renderCover(input: CoverInput, templateOverride?: TemplateId | null): RenderedCover {
+  const templateId = templateOverride ?? templateFor(input.folder);
   const glyph = glyphFor(input.folder);
 
   const xhtml = `<?xml version="1.0" encoding="utf-8"?>

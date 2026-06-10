@@ -105,11 +105,17 @@ export function migrate(db: DB): void {
     );
   `);
 
-  // Idempotent column migration for existing DBs.
+  // Idempotent column migrations for existing DBs.
   const cols = (db.prepare('PRAGMA table_info(folder_settings)').all() as { name: string }[]).map(
     (c) => c.name,
   );
   if (!cols.includes('max_articles')) {
     db.exec('ALTER TABLE folder_settings ADD COLUMN max_articles INTEGER NOT NULL DEFAULT 20');
+  }
+  if (!cols.includes('cover_template')) {
+    db.exec('ALTER TABLE folder_settings ADD COLUMN cover_template TEXT');
+  }
+  if (!cols.includes('cover_theme')) {
+    db.exec("ALTER TABLE folder_settings ADD COLUMN cover_theme TEXT NOT NULL DEFAULT 'dark'");
   }
 }

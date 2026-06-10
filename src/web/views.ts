@@ -13,7 +13,10 @@ const STYLE = `
   header a:hover { opacity:1; }
   main { max-width:880px; margin:0 auto; padding:20px; }
   .folder { background:#fff; border:1px solid var(--line); border-radius:8px; margin-bottom:20px; overflow:hidden; }
-  .folder h2 { margin:0; padding:12px 16px; font-size:18px; background:#f3f3f3; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; }
+  .folder h2 { margin:0; padding:12px 16px; font-size:18px; background:#f3f3f3; border-bottom:1px solid var(--line); }
+  .folder-toolbar { padding:10px 16px; border-bottom:1px solid var(--line); background:#fafafa; display:flex; flex-wrap:wrap; gap:16px; align-items:flex-end; }
+  .folder-toolbar-group { display:flex; flex-direction:column; gap:4px; }
+  .folder-toolbar-group label { font-size:11px; font-weight:600; color:var(--muted); letter-spacing:0.05em; text-transform:uppercase; }
   .article { display:flex; gap:12px; padding:10px 16px; border-bottom:1px solid #f0f0f0; align-items:flex-start; }
   .article:last-child { border-bottom:0; }
   .article .meta { flex:1; }
@@ -201,22 +204,39 @@ export function feedsPage(feeds: Feed[], folderSettingsMap: Map<string, FolderSe
         folder,
         cadence: 'daily',
         deliveryDay: 0,
+        coverTemplate: null,
+        coverTheme: 'dark',
       };
 
-      const renameForm = `<form method="post" action="/feeds/${encodeURIComponent(folder)}/rename" style="display:flex; gap:6px; align-items:center; font-size:13px">
-        <input name="newName" type="text" value="${escapeHtml(folder)}" required style="width:auto; padding:4px 6px" />
-        <button type="submit" class="secondary" style="padding:4px 8px">Rename</button>
+      const renameForm = `<form method="post" action="/feeds/${encodeURIComponent(folder)}/rename" style="display:flex; gap:6px; align-items:center">
+        <input name="newName" type="text" value="${escapeHtml(folder)}" required style="width:auto; padding:4px 6px; font:inherit; font-size:13px" />
+        <button type="submit" class="secondary" style="padding:4px 8px; font-size:13px">Rename</button>
       </form>`;
 
-      const cadenceForm = `<form method="post" action="/feeds/${encodeURIComponent(folder)}/cadence" style="display:flex; gap:6px; align-items:center; font-size:13px; flex-wrap:wrap">
-        <select name="cadence" onchange="this.form.querySelector('.day-sel').style.display=this.value==='weekly'?'':'none'">
+      const cadenceForm = `<form method="post" action="/feeds/${encodeURIComponent(folder)}/cadence" style="display:flex; gap:6px; align-items:center">
+        <select name="cadence" style="padding:4px 6px; font:inherit; font-size:13px; border:1px solid var(--line); border-radius:6px" onchange="this.form.querySelector('.day-sel').style.display=this.value==='weekly'?'':'none'">
           <option value="daily"${fs.cadence === 'daily' ? ' selected' : ''}>Daily</option>
           <option value="weekly"${fs.cadence === 'weekly' ? ' selected' : ''}>Weekly</option>
         </select>
-        <select name="deliveryDay" class="day-sel" style="${fs.cadence !== 'weekly' ? 'display:none' : ''}">
+        <select name="deliveryDay" class="day-sel" style="${fs.cadence !== 'weekly' ? 'display:none; ' : ''}padding:4px 6px; font:inherit; font-size:13px; border:1px solid var(--line); border-radius:6px">
           ${DOW_NAMES.map((d, i) => `<option value="${i}"${fs.deliveryDay === i ? ' selected' : ''}>${escapeHtml(d)}</option>`).join('')}
         </select>
-        <button type="submit" class="secondary" style="padding:4px 8px">Save</button>
+        <button type="submit" class="secondary" style="padding:4px 8px; font-size:13px">Save</button>
+      </form>`;
+
+      const coverForm = `<form method="post" action="/feeds/${encodeURIComponent(folder)}/cover" style="display:flex; gap:6px; align-items:center">
+        <select name="coverTemplate" style="padding:4px 6px; font:inherit; font-size:13px; border:1px solid var(--line); border-radius:6px">
+          <option value=""${fs.coverTemplate === null ? ' selected' : ''}>Auto style</option>
+          <option value="broadsheet"${fs.coverTemplate === 'broadsheet' ? ' selected' : ''}>Broadsheet</option>
+          <option value="the-drop"${fs.coverTemplate === 'the-drop' ? ' selected' : ''}>The Drop</option>
+          <option value="the-review"${fs.coverTemplate === 'the-review' ? ' selected' : ''}>The Review</option>
+          <option value="the-signal"${fs.coverTemplate === 'the-signal' ? ' selected' : ''}>The Signal</option>
+        </select>
+        <select name="coverTheme" style="padding:4px 6px; font:inherit; font-size:13px; border:1px solid var(--line); border-radius:6px">
+          <option value="dark"${fs.coverTheme === 'dark' ? ' selected' : ''}>Dark</option>
+          <option value="light"${fs.coverTheme === 'light' ? ' selected' : ''}>Light</option>
+        </select>
+        <button type="submit" class="secondary" style="padding:4px 8px; font-size:13px">Save cover</button>
       </form>`;
 
       const otherFolders = knownFolders.filter((fn) => fn !== folder);
@@ -258,7 +278,12 @@ export function feedsPage(feeds: Feed[], folderSettingsMap: Map<string, FolderSe
         })
         .join('\n');
       return `<section class="folder">
-        <h2 style="flex-wrap:wrap; gap:8px">${escapeHtml(folder)}${renameForm}${cadenceForm}</h2>
+        <h2>${escapeHtml(folder)}</h2>
+        <div class="folder-toolbar">
+          <div class="folder-toolbar-group"><label>Rename</label>${renameForm}</div>
+          <div class="folder-toolbar-group"><label>Schedule</label>${cadenceForm}</div>
+          <div class="folder-toolbar-group"><label>Cover</label>${coverForm}</div>
+        </div>
         ${rows}
       </section>`;
     })

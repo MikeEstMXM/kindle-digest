@@ -18,6 +18,7 @@ import { buildEpub, type EpubArticle, type EpubBinary, type EpubFeedGroup } from
 import { buildDiagnosticsPage } from '../diagnostics/build.js';
 import { feedCounts } from './grouping.js';
 import type { LoadedFont } from '../cover/fontLoader.js';
+import type { TemplateId } from '../cover/hash.js';
 import { buildNcx } from '../epub/ncx.js';
 import { buildMasthead } from '../epub/masthead.js';
 import { buildSectionIndexPage } from '../epub/sectionIndex.js';
@@ -35,6 +36,8 @@ export interface BuildOptions {
   fonts: LoadedFont[];
   fetchPage?: PageFetcher;
   fetchImage?: typeof fetch;
+  coverTemplate?: TemplateId | null;
+  coverTheme?: 'light' | 'dark';
 }
 
 export interface BuiltDigest {
@@ -59,7 +62,11 @@ async function resolveContent(
   fetchPage?: PageFetcher,
 ): Promise<ResolvedArticle> {
   const started = Date.now();
-  if (contentIsFull(article, minChars)) {
+  // Image-only comics (XKCD, SMBC) have near-zero text in their feed entry;
+  // the <img> IS the full article. Bypass Readability for these.
+  const hasImages = /<img\b/i.test(article.contentHtml);
+  const isImageOnly = hasImages && article.contentTextLength < 100;
+  if (contentIsFull(article, minChars) || isImageOnly) {
     const { xhtml, imageUrls } = sanitizeArticleHtml(article.contentHtml);
     return { article, source: 'feed', failureReason: null, bodyXhtml: xhtml, imageUrls, extractMs: Date.now() - started };
   }
@@ -224,9 +231,14 @@ export async function buildFolderDigest(
     { folder, weekday, isoDate: opts.isoDate, dateLabel, feeds: feedCounts(articles) },
     rawCoverImage,
     opts.fonts,
+    opts.coverTemplate,
+    opts.coverTheme,
   );
   images.unshift({ href: 'images/cover.jpg', data: coverJpeg, mediaType: 'image/jpeg', isCover: true });
-  const cover = renderCover({ folder, weekday, isoDate: opts.isoDate, dateLabel, feeds: feedCounts(articles) });
+  const cover = renderCover(
+    { folder, weekday, isoDate: opts.isoDate, dateLabel, feeds: feedCounts(articles) },
+    opts.coverTemplate,
+  );
 
   // Masthead image (600×60 for Kindle periodical display).
   const mastheadBuffer = await buildMasthead(folder);

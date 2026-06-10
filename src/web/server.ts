@@ -21,6 +21,7 @@ import {
   articleRowFragment,
   type DashboardFolder,
 } from './views.js';
+import type { TemplateId } from '../cover/hash.js';
 
 const require = createRequire(import.meta.url);
 const HTMX_JS = readFileSync(require.resolve('htmx.org/dist/htmx.min.js'), 'utf8');
@@ -180,7 +181,13 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
     const url = (b.url ?? '').trim();
     const folder = (b.folder ?? '').trim() || 'Uncategorized';
     if (!url) return reply.redirect('/feeds');
-    const feed = ctx.feeds.add(url, url, folder); // title filled in after first fetch
+    let feed;
+    try {
+      feed = ctx.feeds.add(url, url, folder);
+    } catch {
+      // Duplicate URL or constraint error — already in the list, just redirect.
+      return reply.redirect('/feeds');
+    }
     try {
       await fetchFeed(feed.id, feed.url, ctx.articles, ctx.feeds);
     } catch {
@@ -221,6 +228,18 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
     const cadence = b.cadence === 'weekly' ? 'weekly' : 'daily';
     const deliveryDay = Math.min(6, Math.max(0, Number(b.deliveryDay ?? 0)));
     ctx.folderSettings.set(folder, cadence, deliveryDay);
+    return reply.redirect('/feeds');
+  });
+
+  app.post('/feeds/:folder/cover', async (req, reply) => {
+    const folder = decodeURIComponent((req.params as { folder: string }).folder);
+    const b = req.body as Record<string, string>;
+    const VALID_TEMPLATES: TemplateId[] = ['broadsheet', 'the-drop', 'the-review', 'the-signal'];
+    const coverTemplate = VALID_TEMPLATES.includes(b.coverTemplate as TemplateId)
+      ? (b.coverTemplate as TemplateId)
+      : null;
+    const coverTheme = b.coverTheme === 'light' ? 'light' : 'dark';
+    ctx.folderSettings.setCover(folder, coverTemplate, coverTheme);
     return reply.redirect('/feeds');
   });
 

@@ -142,32 +142,40 @@ function esc(s: string): string {
   return escapeHtml(s);
 }
 
-function buildHeaderElements(templateId: TemplateId, glyph: string, fontFamily: string): string[] {
+function buildHeaderElements(
+  templateId: TemplateId,
+  glyph: string,
+  fontFamily: string,
+  theme: 'light' | 'dark',
+): string[] {
+  const tc = (dark: string, light: string) => (theme === 'dark' ? dark : light);
   const els: string[] = [];
   const sp = vw(6);
 
   switch (templateId) {
     case 'broadsheet': {
       const hh = vh(5.5);
-      els.push(`<rect x="0" y="0" width="${W}" height="${hh}" fill="#000"/>`);
-      // Triple rule
+      els.push(`<rect x="0" y="0" width="${W}" height="${hh}" fill="${tc('#000', '#e8e8e8')}"/>`);
+      const ruleFill = tc('white', '#1a1a1a');
       els.push(
-        `<rect x="0" y="${hh}" width="${W}" height="2" fill="white"/>`,
-        `<rect x="0" y="${hh + 5}" width="${W}" height="1" fill="white"/>`,
-        `<rect x="0" y="${hh + 8}" width="${W}" height="1" fill="white"/>`,
+        `<rect x="0" y="${hh}" width="${W}" height="2" fill="${ruleFill}"/>`,
+        `<rect x="0" y="${hh + 5}" width="${W}" height="1" fill="${ruleFill}"/>`,
+        `<rect x="0" y="${hh + 8}" width="${W}" height="1" fill="${ruleFill}"/>`,
       );
       const ty = Math.round(hh * 0.66);
+      const textFill = tc('white', '#1a1a1a');
       els.push(
-        `<text x="${sp}" y="${ty}" font-family="${fontFamily}" font-size="${vw(1.8)}" fill="white" letter-spacing="3px">DAILY DIGEST</text>`,
-        `<text x="${W - sp}" y="${ty}" font-family="${fontFamily}" font-size="${vw(3.5)}" fill="white" text-anchor="end">${esc(glyph)}</text>`,
+        `<text x="${sp}" y="${ty}" font-family="${fontFamily}" font-size="${vw(1.8)}" fill="${textFill}" letter-spacing="3px">DAILY DIGEST</text>`,
+        `<text x="${W - sp}" y="${ty}" font-family="${fontFamily}" font-size="${vw(3.5)}" fill="${textFill}" text-anchor="end">${esc(glyph)}</text>`,
       );
       break;
     }
     case 'the-drop': {
       const ty = vh(5.5) + vw(1.8);
+      const textFill = tc('rgba(255,255,255,0.5)', 'rgba(0,0,0,0.5)');
       els.push(
-        `<text x="${sp}" y="${ty}" font-family="${fontFamily}" font-size="${vw(1.8)}" fill="rgba(255,255,255,0.5)" letter-spacing="3px">DAILY DIGEST</text>`,
-        `<text x="${W - sp}" y="${ty}" font-family="${fontFamily}" font-size="${vw(3.5)}" fill="rgba(255,255,255,0.5)" text-anchor="end">${esc(glyph)}</text>`,
+        `<text x="${sp}" y="${ty}" font-family="${fontFamily}" font-size="${vw(1.8)}" fill="${textFill}" letter-spacing="3px">DAILY DIGEST</text>`,
+        `<text x="${W - sp}" y="${ty}" font-family="${fontFamily}" font-size="${vw(3.5)}" fill="${textFill}" text-anchor="end">${esc(glyph)}</text>`,
       );
       break;
     }
@@ -175,23 +183,26 @@ function buildHeaderElements(templateId: TemplateId, glyph: string, fontFamily: 
       const kickerY = vh(5.5) + vw(1.8);
       const glyphY = kickerY + vw(3.5);
       const ruleY = glyphY + vw(2);
+      const textFill = tc('white', '#1a1a1a');
+      const ruleFill = tc('rgba(255,255,255,0.6)', 'rgba(0,0,0,0.6)');
       els.push(
-        `<text x="${W / 2}" y="${kickerY}" font-family="${fontFamily}" font-size="${vw(1.8)}" font-weight="600" fill="white" letter-spacing="4px" text-anchor="middle">Daily Digest</text>`,
-        `<text x="${W / 2}" y="${glyphY}" font-family="${fontFamily}" font-size="${vw(3.5)}" fill="white" text-anchor="middle">${esc(glyph)}</text>`,
-        `<line x1="${W / 2 - vw(6)}" y1="${ruleY}" x2="${W / 2 + vw(6)}" y2="${ruleY}" stroke="rgba(255,255,255,0.6)" stroke-width="2"/>`,
+        `<text x="${W / 2}" y="${kickerY}" font-family="${fontFamily}" font-size="${vw(1.8)}" font-weight="600" fill="${textFill}" letter-spacing="4px" text-anchor="middle">Daily Digest</text>`,
+        `<text x="${W / 2}" y="${glyphY}" font-family="${fontFamily}" font-size="${vw(3.5)}" fill="${textFill}" text-anchor="middle">${esc(glyph)}</text>`,
+        `<line x1="${W / 2 - vw(6)}" y1="${ruleY}" x2="${W / 2 + vw(6)}" y2="${ruleY}" stroke="${ruleFill}" stroke-width="2"/>`,
       );
       break;
     }
     case 'the-signal': {
       const hh = vh(5.5);
       els.push(
-        `<rect x="0" y="0" width="${W}" height="${hh}" fill="#000"/>`,
-        `<rect x="0" y="${hh}" width="${W}" height="4" fill="#555"/>`,
+        `<rect x="0" y="0" width="${W}" height="${hh}" fill="${tc('#000', '#e8e8e8')}"/>`,
+        `<rect x="0" y="${hh}" width="${W}" height="4" fill="${tc('#555', '#999')}"/>`,
       );
       const ty = Math.round(hh * 0.66);
+      const textFill = tc('white', '#1a1a1a');
       els.push(
-        `<text x="${sp}" y="${ty}" font-family="${fontFamily}" font-size="${vw(1.8)}" font-weight="600" fill="white" letter-spacing="1px">DAILY DIGEST</text>`,
-        `<text x="${W - sp}" y="${ty}" font-family="${fontFamily}" font-size="${vw(3.5)}" fill="white" text-anchor="end">${esc(glyph)}</text>`,
+        `<text x="${sp}" y="${ty}" font-family="${fontFamily}" font-size="${vw(1.8)}" font-weight="600" fill="${textFill}" letter-spacing="1px">DAILY DIGEST</text>`,
+        `<text x="${W - sp}" y="${ty}" font-family="${fontFamily}" font-size="${vw(3.5)}" fill="${textFill}" text-anchor="end">${esc(glyph)}</text>`,
       );
       break;
     }
@@ -207,7 +218,9 @@ function buildBottomZone(
   weekday: string,
   folder: string,
   dateLabel: string,
+  theme: 'light' | 'dark',
 ): string[] {
+  const tc = (dark: string, light: string) => (theme === 'dark' ? dark : light);
   const els: string[] = [];
   const x = cfg.align === 'center' ? W / 2 : vw(cfg.sidePad);
   const anchor = cfg.align === 'center' ? 'middle' : 'start';
@@ -220,14 +233,14 @@ function buildBottomZone(
   const fSize = vw(cfg.feedSize);
   const fLH = Math.round(fSize * 1.55);
 
-  // Collect feed text elements bottom-to-top, then emit top-to-bottom
+  const feedFill = tc('white', '#1a1a1a');
   const feedEls: string[] = [];
   for (let i = cappedFeeds.length - 1; i >= 0; i--) {
     const f = cappedFeeds[i];
     const label = cfg.feedUppercase ? f.name.toUpperCase() : f.name;
     const countStr = f.count > 0 ? `  ${f.count}` : '';
     feedEls.unshift(
-      `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${fSize}" fill="white" text-anchor="${anchor}" opacity="0.9">${esc(label + countStr)}</text>`,
+      `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${fSize}" fill="${feedFill}" text-anchor="${anchor}" opacity="0.9">${esc(label + countStr)}</text>`,
     );
     y -= fLH;
   }
@@ -235,14 +248,15 @@ function buildBottomZone(
 
   // Divider
   y -= Math.round(H * 0.01);
+  const dividerStroke = tc('rgba(255,255,255,0.45)', 'rgba(0,0,0,0.45)');
   if (cfg.align === 'center') {
     const hw = vw(15);
     els.push(
-      `<line x1="${W / 2 - hw}" y1="${y}" x2="${W / 2 + hw}" y2="${y}" stroke="rgba(255,255,255,0.45)" stroke-width="1"/>`,
+      `<line x1="${W / 2 - hw}" y1="${y}" x2="${W / 2 + hw}" y2="${y}" stroke="${dividerStroke}" stroke-width="1"/>`,
     );
   } else {
     els.push(
-      `<line x1="${vw(cfg.sidePad)}" y1="${y}" x2="${vw(cfg.sidePad) + vw(15)}" y2="${y}" stroke="rgba(255,255,255,0.45)" stroke-width="1"/>`,
+      `<line x1="${vw(cfg.sidePad)}" y1="${y}" x2="${vw(cfg.sidePad) + vw(15)}" y2="${y}" stroke="${dividerStroke}" stroke-width="1"/>`,
     );
   }
 
@@ -252,35 +266,50 @@ function buildBottomZone(
 
   // Folder subtitle
   const folderSize = vw(cfg.folderSize);
+  const folderFill = tc('rgba(255,255,255,0.72)', 'rgba(0,0,0,0.72)');
   els.push(
-    `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${folderSize}" font-style="italic" fill="rgba(255,255,255,0.72)" text-anchor="${anchor}">${esc(folder)}</text>`,
+    `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${folderSize}" font-style="italic" fill="${folderFill}" text-anchor="${anchor}">${esc(folder)}</text>`,
   );
   y -= Math.round(folderSize * 1.3);
 
   // Weekday headline
   const wdSize = vw(cfg.weekdaySize);
   const wdText = cfg.weekdayUppercase ? weekday.toUpperCase() : weekday;
+  const weekdayFill = tc('white', '#1a1a1a');
   els.push(
-    `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${wdSize}" font-weight="${cfg.weekdayWeight}" font-style="${cfg.weekdayItalic ? 'italic' : 'normal'}" fill="white" text-anchor="${anchor}" letter-spacing="${cfg.weekdayLetterSpacing}">${esc(wdText)}</text>`,
+    `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${wdSize}" font-weight="${cfg.weekdayWeight}" font-style="${cfg.weekdayItalic ? 'italic' : 'normal'}" fill="${weekdayFill}" text-anchor="${anchor}" letter-spacing="${cfg.weekdayLetterSpacing}">${esc(wdText)}</text>`,
   );
 
   return els;
 }
 
+// Per-template image adjustments for light theme (brighten, reduce contrast).
+const IMAGE_ADJUST_LIGHT: Record<TemplateId, { contrast: number; brightness: number }> = {
+  broadsheet:   { contrast: 0.85, brightness: 1.5 },
+  'the-drop':   { contrast: 0.8,  brightness: 2.0 },
+  'the-review': { contrast: 0.85, brightness: 1.6 },
+  'the-signal': { contrast: 0.85, brightness: 1.5 },
+};
+
 function buildCoverSvg(
   templateId: TemplateId,
   input: CoverInput & { glyph: string },
   fonts: LoadedFont[],
+  theme: 'light' | 'dark',
 ): string {
   const cfg = CFGS[templateId];
   const fontFamily = FONT_FAMILIES[templateId];
   const fontFaceCss = buildFontFaceCss(templateId, fonts);
 
+  const gradBase = theme === 'light' ? '255,255,255' : '0,0,0';
   const gradientStops = cfg.gradient
-    .map(([offset, color]) => `<stop offset="${Math.round(offset * 100)}%" stop-color="${color}"/>`)
+    .map(([offset, color]) => {
+      const c = theme === 'light' ? color.replace('0,0,0', gradBase) : color;
+      return `<stop offset="${Math.round(offset * 100)}%" stop-color="${c}"/>`;
+    })
     .join('');
 
-  const headerEls = buildHeaderElements(templateId, input.glyph, fontFamily);
+  const headerEls = buildHeaderElements(templateId, input.glyph, fontFamily, theme);
   const bottomEls = buildBottomZone(
     templateId,
     cfg,
@@ -289,13 +318,15 @@ function buildCoverSvg(
     input.weekday,
     input.folder,
     input.dateLabel,
+    theme,
   );
 
   const decorationEls: string[] = [];
   if (templateId === 'the-review') {
+    const tc = (dark: string, light: string) => (theme === 'dark' ? dark : light);
     decorationEls.push(
-      `<rect x="${vw(1.5)}" y="${vw(1.5)}" width="${W - vw(3)}" height="${H - vw(3)}" fill="none" stroke="rgba(255,255,255,0.5)" stroke-width="2"/>`,
-      `<rect x="${vw(2.5)}" y="${vw(2.5)}" width="${W - vw(5)}" height="${H - vw(5)}" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="2"/>`,
+      `<rect x="${vw(1.5)}" y="${vw(1.5)}" width="${W - vw(3)}" height="${H - vw(3)}" fill="none" stroke="${tc('rgba(255,255,255,0.5)', 'rgba(0,0,0,0.5)')}" stroke-width="2"/>`,
+      `<rect x="${vw(2.5)}" y="${vw(2.5)}" width="${W - vw(5)}" height="${H - vw(5)}" fill="none" stroke="${tc('rgba(255,255,255,0.22)', 'rgba(0,0,0,0.22)')}" stroke-width="2"/>`,
     );
   }
 
@@ -313,16 +344,21 @@ ${bottomEls.join('\n')}
 
 /**
  * Build a 1072×1448 JPEG cover by compositing a template SVG overlay onto
- * the background image (or a solid dark base if no image is available).
+ * the background image (or a solid base if no image is available).
  */
 export async function buildCoverJpeg(
   input: CoverInput,
   backgroundRaw: Buffer | undefined,
   fonts: LoadedFont[],
+  templateOverride?: TemplateId | null,
+  theme: 'light' | 'dark' = 'dark',
 ): Promise<Buffer> {
-  const templateId = templateFor(input.folder);
+  const templateId = templateOverride ?? templateFor(input.folder);
   const glyph = glyphFor(input.folder);
-  const adjust = IMAGE_ADJUST[templateId];
+  const adjustTable = theme === 'light' ? IMAGE_ADJUST_LIGHT : IMAGE_ADJUST;
+  const adjust = adjustTable[templateId];
+
+  const baseColor = theme === 'light' ? { r: 245, g: 245, b: 245 } : { r: 26, g: 26, b: 26 };
 
   // Build base layer (1072×1448)
   const baseImg = backgroundRaw
@@ -331,10 +367,10 @@ export async function buildCoverJpeg(
         .linear(adjust.contrast, 128 - 128 * adjust.contrast)
         .modulate({ brightness: adjust.brightness })
         .resize({ width: W, height: H, fit: 'cover', position: 'centre' })
-    : sharp({ create: { width: W, height: H, channels: 3, background: { r: 26, g: 26, b: 26 } } });
+    : sharp({ create: { width: W, height: H, channels: 3, background: baseColor } });
 
   // Build SVG overlay
-  const svg = buildCoverSvg(templateId, { ...input, glyph }, fonts);
+  const svg = buildCoverSvg(templateId, { ...input, glyph }, fonts, theme);
 
   return baseImg
     .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])

@@ -61,6 +61,8 @@ export async function buildFolderEpub(
       timezone: settings.timezone,
       minChars: ctx.env.fulltextMinChars,
       fonts: loadFontBuffers(FONTS_DIR),
+      coverTemplate: folderCfg.coverTemplate,
+      coverTheme: folderCfg.coverTheme,
     },
     ctx.runLog,
   );

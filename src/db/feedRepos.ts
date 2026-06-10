@@ -1,6 +1,7 @@
 import type { DB } from './schema.js';
 import { textLength } from '../util/html.js';
 import type { NormalizedArticle } from '../reader/types.js';
+import type { TemplateId } from '../cover/hash.js';
 
 // ─── Folder settings repo ─────────────────────────────────────────────────────
 
@@ -8,6 +9,18 @@ export interface FolderSettings {
   folder: string;
   cadence: 'daily' | 'weekly';
   deliveryDay: number; // 0=Sun, 1=Mon, …, 6=Sat (only used when cadence='weekly')
+  coverTemplate: TemplateId | null; // null = auto-assign from folder name hash
+  coverTheme: 'light' | 'dark';
+}
+
+function rowToFolderSettings(row: Record<string, unknown>): FolderSettings {
+  return {
+    folder: row.folder as string,
+    cadence: row.cadence as 'daily' | 'weekly',
+    deliveryDay: row.delivery_day as number,
+    coverTemplate: (row.cover_template as TemplateId | null) ?? null,
+    coverTheme: ((row.cover_theme as string) === 'light' ? 'light' : 'dark'),
+  };
 }
 
 export class FolderSettingsRepo {
@@ -17,12 +30,8 @@ export class FolderSettingsRepo {
     const row = this.db
       .prepare('SELECT * FROM folder_settings WHERE folder = ?')
       .get(folder) as Record<string, unknown> | undefined;
-    if (!row) return { folder, cadence: 'daily', deliveryDay: 0 };
-    return {
-      folder: row.folder as string,
-      cadence: row.cadence as 'daily' | 'weekly',
-      deliveryDay: row.delivery_day as number,
-    };
+    if (!row) return { folder, cadence: 'daily', deliveryDay: 0, coverTemplate: null, coverTheme: 'dark' };
+    return rowToFolderSettings(row);
   }
 
   set(folder: string, cadence: 'daily' | 'weekly', deliveryDay: number): void {
@@ -36,18 +45,25 @@ export class FolderSettingsRepo {
       .run(folder, cadence, deliveryDay);
   }
 
+  setCover(folder: string, coverTemplate: TemplateId | null, coverTheme: 'light' | 'dark'): void {
+    this.db
+      .prepare(
+        `INSERT INTO folder_settings (folder, cadence, delivery_day, cover_template, cover_theme)
+         VALUES (?, 'daily', 0, ?, ?)
+         ON CONFLICT(folder) DO UPDATE SET
+           cover_template = excluded.cover_template,
+           cover_theme = excluded.cover_theme`,
+      )
+      .run(folder, coverTemplate, coverTheme);
+  }
+
   allAsMap(): Map<string, FolderSettings> {
     const rows = this.db
       .prepare('SELECT * FROM folder_settings')
       .all() as Record<string, unknown>[];
     const map = new Map<string, FolderSettings>();
     for (const r of rows) {
-      const folder = r.folder as string;
-      map.set(folder, {
-        folder,
-        cadence: r.cadence as 'daily' | 'weekly',
-        deliveryDay: r.delivery_day as number,
-      });
+      map.set(r.folder as string, rowToFolderSettings(r));
     }
     return map;
   }
