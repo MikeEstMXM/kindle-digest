@@ -1,4 +1,5 @@
 import 'dotenv/config';
+import { DEFAULT_BUILD_CONCURRENCY } from '../util/concurrency.js';
 
 export interface Env {
   port: number;
@@ -24,6 +25,8 @@ export interface Env {
   alertEmail?: string;
   /** Attempts before a delivery is marked permanently failed. */
   deliveryMaxAttempts: number;
+  /** Articles extracted/rendered in parallel during a build. */
+  buildConcurrency: number;
 }
 
 let cached: Env | undefined;
@@ -52,6 +55,7 @@ export function loadEnv(): Env {
     digestDir: process.env.DIGEST_DIR ?? './data/digests',
     alertEmail: process.env.ALERT_EMAIL ?? process.env.SMTP_FROM,
     deliveryMaxAttempts: Number(process.env.DELIVERY_MAX_ATTEMPTS ?? 5),
+    buildConcurrency: Number(process.env.BUILD_CONCURRENCY ?? DEFAULT_BUILD_CONCURRENCY),
   };
   return cached;
 }

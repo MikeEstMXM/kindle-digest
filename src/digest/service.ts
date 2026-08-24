@@ -62,6 +62,7 @@ export async function buildFolderEpub(
       minChars: ctx.env.fulltextMinChars,
       fonts: loadFontBuffers(FONTS_DIR),
       outDir: ctx.env.digestDir,
+      concurrency: ctx.env.buildConcurrency,
       coverTemplate: folderCfg.coverTemplate,
       coverTheme: folderCfg.coverTheme,
     },

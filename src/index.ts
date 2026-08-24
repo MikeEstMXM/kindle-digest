@@ -1,3 +1,4 @@
+import { configureSharp } from './content/sharpConfig.js';
 import { createContext } from './app/context.js';
 import { buildServer } from './web/server.js';
 import { DailyScheduler } from './scheduler/runner.js';
@@ -7,6 +8,8 @@ import { fetchAllFeeds } from './rss/fetcher.js';
 const FEED_REFRESH_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 
 async function main(): Promise<void> {
+  // Global libvips state — set before any image work begins.
+  configureSharp();
   const ctx = createContext();
   const scheduler = new DailyScheduler(ctx);
   const worker = new DeliveryWorker(ctx);

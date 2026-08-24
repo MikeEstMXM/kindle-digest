@@ -100,6 +100,10 @@ Copy `.env.example` to `.env` and set:
 | `DELIVERY_TIME` / `TIMEZONE` | – | Daily send time (HH:mm, 24h) and IANA timezone. Defaults: `06:30` / `America/New_York`. |
 | `DATABASE_PATH` | – | SQLite path. On Fly this lives on the mounted volume (`/data/kindle-digest.sqlite`). |
 | `FULLTEXT_MIN_CHARS` | – | Min visible-text chars before feed content is treated as "full" (else Readability fallback). Default `1800`. |
+| `DIGEST_DIR` | – | Where built `.epub` files are staged. On Fly this must be on the volume (`/data/digests`) so a failed send can retry without rebuilding. |
+| `ALERT_EMAIL` | – | Where delivery-failure alerts go. Defaults to `SMTP_FROM`. |
+| `DELIVERY_MAX_ATTEMPTS` | – | Retries before a delivery is marked failed and alerted. Default `5`. |
+| `BUILD_CONCURRENCY` | – | Articles fetched/rendered in parallel. Default `4`. Trades peak memory for build speed — lower it to `2` if builds run hot on a 512 MB VM. |
 
 No OAuth tokens or encryption keys are required.
 

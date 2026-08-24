@@ -7,6 +7,12 @@
  * Synthetic (no network, no DB):
  *   npx tsx scripts/bench-digest.ts --articles 157
  *
+ * The stub fetchers return instantly by default, which measures CPU cost only
+ * and hides the fact that a real build is dominated by serial network waits.
+ * --latency makes each stubbed fetch sleep, so wall-clock reflects a realistic
+ * I/O profile and concurrency changes are actually visible:
+ *   npx tsx scripts/bench-digest.ts --articles 157 --latency 300
+ *
  * Against the real database (run on the Fly machine):
  *   fly ssh console --app kindle-digest
  *   cd /app && npx tsx scripts/bench-digest.ts \
@@ -20,6 +26,8 @@ import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
+import { configureSharp } from '../src/content/sharpConfig.js';
+import { DEFAULT_BUILD_CONCURRENCY } from '../src/util/concurrency.js';
 import { buildFolderDigest } from '../src/digest/orchestrator.js';
 import { loadFontBuffers } from '../src/cover/fontLoader.js';
 import { openDb } from '../src/db/schema.js';
@@ -56,6 +64,9 @@ class PeakMemory {
 }
 
 const mb = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(0)} MB`;
+
+const sleep = (ms: number): Promise<void> =>
+  ms > 0 ? new Promise((resolve) => setTimeout(resolve, ms)) : Promise.resolve();
 
 /** Articles shaped like a real news digest: mixed full-text and short entries. */
 function syntheticArticles(count: number): NormalizedArticle[] {
@@ -96,14 +107,18 @@ async function loadFromDb(
 }
 
 async function main(): Promise<void> {
+  configureSharp();
   const dbPath = arg('db');
   const folder = arg('folder', 'News')!;
   const isoDate = arg('date', '2026-08-23')!;
   const count = Number(arg('articles', '157'));
+  // Per-fetch delay for the stubs. Real page/image fetches cost 100s of ms each
+  // and the build issues one per article plus up to 5 images, so this is the
+  // term that dominates a production build.
+  const latency = Number(arg('latency', '0'));
+  const concurrency = Number(arg('concurrency', String(DEFAULT_BUILD_CONCURRENCY)));
 
-  const articles = dbPath
-    ? await loadFromDb(dbPath, folder, isoDate)
-    : syntheticArticles(count);
+  const articles = dbPath ? await loadFromDb(dbPath, folder, isoDate) : syntheticArticles(count);
 
   if (articles.length === 0) {
     console.error(`No articles found for ${folder} on ${isoDate}.`);
@@ -111,27 +126,32 @@ async function main(): Promise<void> {
   }
 
   // Offline stand-ins so the benchmark measures build cost, not the network.
-  const fetchPage = async (url: string) => ({
-    status: 200,
-    body:
-      `<html><head><title>Recovered</title></head><body><article><h1>Recovered</h1>` +
-      `<p>Full text recovered from ${url} by the Readability fallback. </p>`.repeat(30) +
-      `</article></body></html>`,
-  });
+  const fetchPage = async (url: string) => {
+    await sleep(latency);
+    return {
+      status: 200,
+      body:
+        `<html><head><title>Recovered</title></head><body><article><h1>Recovered</h1>` +
+        `<p>Full text recovered from ${url} by the Readability fallback. </p>`.repeat(30) +
+        `</article></body></html>`,
+    };
+  };
   const sampleImage = await sharp({
     create: { width: 1600, height: 1200, channels: 3, background: { r: 110, g: 110, b: 110 } },
   })
     .jpeg()
     .toBuffer();
-  const fetchImage = (async () =>
-    new Response(new Uint8Array(sampleImage), { status: 200 })) as unknown as typeof fetch;
+  const fetchImage = (async () => {
+    await sleep(latency);
+    return new Response(new Uint8Array(sampleImage), { status: 200 });
+  }) as unknown as typeof fetch;
 
   const outDir = mkdtempSync(join(tmpdir(), 'bench-digest-'));
   const meter = new PeakMemory();
 
   console.log(
     `Building "${folder}" for ${isoDate} — ${articles.length} articles ` +
-      `(${dbPath ? 'real DB' : 'synthetic'})\n`,
+      `(${dbPath ? 'real DB' : 'synthetic'}, ${latency} ms/fetch, concurrency ${concurrency})\n`,
   );
 
   meter.start();
@@ -145,6 +165,7 @@ async function main(): Promise<void> {
       minChars: 1800,
       fonts: loadFontBuffers(FONTS),
       outDir,
+      concurrency,
       fetchPage,
       fetchImage,
     });

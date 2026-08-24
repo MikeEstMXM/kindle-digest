@@ -188,26 +188,99 @@ pending ──claim──> building ──ok──> built ──claim──> sen
   same SMTP path that may be broken, so the outbox row — not the email — is the
   record.
 
-## Memory profile (why long digests used to fail)
+## Build profile: memory and speed
 
-Measured with `scripts/bench-digest.ts` (synthetic, or `--db` against the real
-volume). Peak RSS on a 512 MB VM:
+Measured with `scripts/bench-digest.ts`. **Pass `--latency <ms>`** — without it
+the stub fetchers return instantly, which measures CPU only and hides the fact
+that a real build is dominated by network waits. Figures below use
+`--latency 300`, peak RSS on a 512 MB VM, ±13 MB run-to-run:
 
-| articles | before | after |
-|----------|--------|-------|
-| 40       | 281 MB | 249 MB |
-| 157      | 361 MB | 316 MB |
-| 320      | 492 MB | 424 MB |
+| articles | original | now (concurrency 4 + jemalloc) |
+|----------|----------|-------------------------------|
+| 40       | 245 MB / 15.6 s | 313 MB /  4.8 s |
+| 157      | 320 MB / 58.3 s | 345 MB / 15.8 s |
+| 320      | 443 MB / 117.8 s | 342 MB / 31.0 s |
 
-The JS heap no longer scales at all (~35 MB flat, was 234 MB at 320 articles)
-because article pages and images are staged to disk as they're produced and
-streamed into the zip, rather than held as strings/Buffers until the end.
-Remaining growth is native allocator churn from sharp/jsdom, partly mitigated by
-`MALLOC_ARENA_MAX=2` (set in the Dockerfile). **Note the trend still rises** —
-~300+ article digests approach the ceiling, so if folders get much busier this
-needs revisiting (bounded batching, or a bigger VM).
+**Peak RSS no longer scales with article count.** It is now a function of
+concurrency (a fixed working set of in-flight articles), not of digest length —
+a 320-article build peaks about where a 40-article one does. Small digests cost
+slightly more than before because 4 articles are in flight instead of 1; that is
+the intended trade.
+
+Concurrency is the knob, via `BUILD_CONCURRENCY` (default 4). At 320 articles:
+
+| concurrency | wall clock | peak RSS |
+|-------------|-----------|----------|
+| 1  | 117.6 s | 292 MB |
+| 2  |  59.8 s | 298 MB |
+| 4  |  31.0 s | 342 MB |
+| 8  |  20.5 s | 398 MB |
+| 16 |  15.1 s | 446 MB |
+
+Diminishing returns past 8, and the ceiling is 512 MB — lower it if a folder
+grows much busier or real digests run heavier than the synthetic profile.
+
+### What actually mattered
+
+Found by `DIGEST_TRACE=1`, which logs RSS/heap at each phase boundary. Worth
+reaching for first: this pipeline's memory behaviour has defied inspection more
+than once, and peak RSS alone says nothing about *which* phase caused it.
+
+1. **Fusing the resolve and render loops (the big one, 490 → 363 MB).** The
+   build used to resolve every article, then loop again to render and stage.
+   That held all 320 sanitized bodies in the heap simultaneously — measured at
+   **253 MB of heapUsed** at the phase boundary. Releasing them in the second
+   loop was one full phase too late. The loops are now fused: resolve, render,
+   stage, release, one article at a time. Feed ordering and cover-image
+   candidates are computed from feed metadata up front, which is what made the
+   two loops separable in the first place.
+2. **jemalloc** (`LD_PRELOAD` in the Dockerfile) — ~40 MB at concurrency 4, more
+   at higher concurrency. sharp/libvips churn large short-lived buffers and
+   glibc keeps the freed chunks; this supersedes `MALLOC_ARENA_MAX=2`.
+3. **`sharp.cache(false)` + `sharp.concurrency()`** (`src/content/sharpConfig.ts`)
+   — no measurable effect on the synthetic benchmark, which reuses one image for
+   every fetch so libvips' cache genuinely hits. Kept because real feeds serve
+   all-distinct images, where a 50 MB cache can never hit and is pure cost.
+   **Unverified against real data** — do not credit it without a `--db` run.
+
+The EPUB itself is ~0.9 MB for 320 articles. Output size and build memory are
+unrelated: the memory goes on raw decoded pixels and DOM trees that exist only
+before compression. A 3000×2000 source image is ~18 MB decoded and lands in the
+book at ~40 KB.
 
 ## Current status
+
+- **2026-08-24 (later)** — Cut build memory *and* wall-clock, after the question
+  "320 articles should still make an EPUB smaller than 10 MB — what's using the
+  memory?" The premise was right and exposed two things.
+  - **The benchmark was blind to the dominant cost.** `bench-digest.ts` stubbed
+    `fetchPage`/`fetchImage` with zero delay, so "157 articles in 14 s" was
+    CPU-only. A real build is mostly network wait. Added `--latency`; the same
+    320-article build then measured 117.8 s, nearly all of it idle.
+  - **The real memory hog was loop structure, not sharp.** `DIGEST_TRACE=1`
+    showed heapUsed hitting 253 MB at the resolve/render boundary — every
+    article's sanitized body live at once. Fusing the loops took 320 articles
+    from 490 → 363 MB. See "Build profile" above.
+  - Added bounded concurrency (`src/util/concurrency.ts`, `BUILD_CONCURRENCY`,
+    default 4): 320 articles now build in 31 s instead of 117.6 s, at a peak
+    *below* the original. Order is preserved by index, not completion —
+    `test/orchestrator-order.test.ts` asserts the book is byte-identical at
+    concurrency 1 and 8.
+  - jemalloc replaces `MALLOC_ARENA_MAX=2` in the Dockerfile.
+  - Tests 96 passing (8 new). typecheck + lint clean. `smoke-epub.ts` unchanged:
+    same two pre-existing failures, no new ones.
+  - **Two hypotheses of mine measured as wrong** and are recorded as such rather
+    than quietly dropped: the 50 MB libvips cache (no effect on the synthetic
+    benchmark) and hoisting the `PAYWALL_HINTS` check in `extract.ts` (rejected
+    before implementing — it would have run `toLowerCase()` on a ~1 MB string
+    for every article to reclaim ~1 MB against a ~15 MB DOM).
+  - **Next / not yet done:** all figures are synthetic. The real-data run still
+    needs the volume:
+    `npx tsx scripts/bench-digest.ts --db /data/kindle-digest.sqlite --folder News --date 2026-08-23 --latency 0`.
+    Real feeds serve distinct images per article, so expect higher peaks than the
+    synthetic profile — if it runs hot, lower `BUILD_CONCURRENCY` to 2 (≈45 MB
+    cheaper, half the speed). Still open from before: confirm a real Kindle
+    delivery end-to-end; the two `smoke-epub.ts` failures.
 
 - **2026-08-24** — Rebuilt delivery around a durable outbox after five digests
   silently failed to send. Root causes found: `run_log` hardcoded `status='sent'`
