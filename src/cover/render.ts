@@ -42,7 +42,7 @@ export function renderCover(input: CoverInput, templateOverride?: TemplateId | n
   <style>html,body{margin:0;padding:0;width:100%;height:100%;}img{width:100%;height:100%;display:block;}</style>
 </head>
 <body>
-  <img src="images/cover.jpg" alt="${escapeHtml(input.folder)} — ${escapeHtml(input.weekday)}" />
+  <img src="images/cover.jpg" alt="${escapeHtml(input.folder)} — ${escapeHtml(input.dateLabel)}" />
 </body>
 </html>`;
 
