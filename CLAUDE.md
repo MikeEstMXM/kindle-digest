@@ -220,6 +220,28 @@ Concurrency is the knob, via `BUILD_CONCURRENCY` (default 4). At 320 articles:
 Diminishing returns past 8, and the ceiling is 512 MB — lower it if a folder
 grows much busier or real digests run heavier than the synthetic profile.
 
+### Verifying against real data
+
+Every figure above is **synthetic**. `--db` alone does not fix that: it reads
+real article content from SQLite but still stubs the network, serving the *same*
+image to every article — which lets libvips' cache hit in a way it never can on
+real feeds. Only `--real-fetch` measures real per-article image churn.
+
+On the Fly machine (deploy first, or this measures the old pipeline):
+
+```
+fly deploy --app kindle-digest
+fly ssh console --app kindle-digest
+cd /app && npx tsx scripts/bench-digest.ts --db /data/kindle-digest.sqlite \
+  --folder News --date 2026-08-23 --real-fetch --concurrency 1
+```
+
+**Step `--concurrency` up from 1** — a build peak on top of the running app can
+OOM a 512 MB VM. The benchmark only builds; it never sends mail or marks
+articles read, so it cannot disturb delivery state. If real peaks come in above
+the synthetic profile, lower the default without a redeploy:
+`fly secrets set BUILD_CONCURRENCY=2 --app kindle-digest`.
+
 ### What actually mattered
 
 Found by `DIGEST_TRACE=1`, which logs RSS/heap at each phase boundary. Worth

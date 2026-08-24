@@ -18,6 +18,16 @@
  *   cd /app && npx tsx scripts/bench-digest.ts \
  *     --db /data/kindle-digest.sqlite --folder News --date 2026-08-23
  *
+ * --db alone still stubs the network, so every article gets the *same* image.
+ * Real feeds serve a distinct image per article, which is the case libvips'
+ * cache can never help with — add --real-fetch to measure that. This is the
+ * only mode whose memory figures reflect real image churn:
+ *   cd /app && npx tsx scripts/bench-digest.ts --db /data/kindle-digest.sqlite \
+ *     --folder News --date 2026-08-23 --real-fetch --concurrency 1
+ *
+ * On a 512 MB VM, step --concurrency up from 1 rather than starting at the
+ * default: a build peak on top of the running app can OOM the machine.
+ *
  * To emulate the 512 MB VM ceiling locally:
  *   node --max-old-space-size=450 --import tsx scripts/bench-digest.ts --articles 157
  */
@@ -117,6 +127,16 @@ async function main(): Promise<void> {
   // term that dominates a production build.
   const latency = Number(arg('latency', '0'));
   const concurrency = Number(arg('concurrency', String(DEFAULT_BUILD_CONCURRENCY)));
+  // Hit the real network instead of the stubs. This is the only mode that
+  // exercises real per-article images: the stub serves one identical JPEG for
+  // every article, so libvips' cache hits in a way it never can on real feeds.
+  const realFetch = process.argv.includes('--real-fetch');
+
+  if (realFetch && latency > 0) {
+    console.error('--latency and --real-fetch are mutually exclusive: the real network supplies');
+    console.error('its own latency. Drop --latency for a real-fetch run.');
+    process.exit(1);
+  }
 
   const articles = dbPath ? await loadFromDb(dbPath, folder, isoDate) : syntheticArticles(count);
 
@@ -126,7 +146,9 @@ async function main(): Promise<void> {
   }
 
   // Offline stand-ins so the benchmark measures build cost, not the network.
-  const fetchPage = async (url: string) => {
+  // Skipped entirely under --real-fetch, where the orchestrator falls back to
+  // defaultPageFetcher and the global fetch.
+  const stubPage = async (url: string) => {
     await sleep(latency);
     return {
       status: 200,
@@ -141,17 +163,23 @@ async function main(): Promise<void> {
   })
     .jpeg()
     .toBuffer();
-  const fetchImage = (async () => {
+  const stubImage = (async () => {
     await sleep(latency);
     return new Response(new Uint8Array(sampleImage), { status: 200 });
   }) as unknown as typeof fetch;
+
+  // undefined makes buildFolderDigest use its real fetchers.
+  const fetchPage = realFetch ? undefined : stubPage;
+  const fetchImage = realFetch ? undefined : stubImage;
 
   const outDir = mkdtempSync(join(tmpdir(), 'bench-digest-'));
   const meter = new PeakMemory();
 
   console.log(
     `Building "${folder}" for ${isoDate} — ${articles.length} articles ` +
-      `(${dbPath ? 'real DB' : 'synthetic'}, ${latency} ms/fetch, concurrency ${concurrency})\n`,
+      `(${dbPath ? 'real DB' : 'synthetic articles'}, ` +
+      `${realFetch ? 'REAL network' : `stubbed network @ ${latency} ms/fetch`}, ` +
+      `concurrency ${concurrency})\n`,
   );
 
   meter.start();
@@ -173,7 +201,8 @@ async function main(): Promise<void> {
     const peak = meter.stop();
     const elapsed = Date.now() - started;
     console.log(`  wall clock : ${(elapsed / 1000).toFixed(1)}s`);
-    console.log(`  peak RSS   : ${mb(peak)}   (Fly VM ceiling is 512 MB)`);
+    const pctOfVm = Math.round((peak / (512 * 1024 * 1024)) * 100);
+    console.log(`  peak RSS   : ${mb(peak)}  (${pctOfVm}% of the 512 MB Fly VM)`);
     const snap = meter.peakSnapshot;
     console.log(
       `  at peak    : heapUsed ${mb(snap.heapUsed)} | heapTotal ${mb(snap.heapTotal)} | ` +
