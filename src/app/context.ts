@@ -2,7 +2,7 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { loadEnv, type Env } from '../config/env.js';
 import { openDb, type DB } from '../db/schema.js';
-import { SettingsRepo, SelectionRepo, RunLogRepo } from '../db/repositories.js';
+import { SettingsRepo, SelectionRepo, RunLogRepo, DeliveryRepo } from '../db/repositories.js';
 import { FeedRepo, ArticleRepo, FolderSettingsRepo } from '../db/feedRepos.js';
 import { ReaderClient } from '../reader/client.js';
 
@@ -16,6 +16,7 @@ export interface AppContext {
   settings: SettingsRepo;
   selection: SelectionRepo;
   runLog: RunLogRepo;
+  delivery: DeliveryRepo;
   feeds: FeedRepo;
   articles: ArticleRepo;
   folderSettings: FolderSettingsRepo;
@@ -28,6 +29,7 @@ export function createContext(): AppContext {
   const settings = new SettingsRepo(db);
   const selection = new SelectionRepo(db);
   const runLog = new RunLogRepo(db);
+  const delivery = new DeliveryRepo(db);
   const feeds = new FeedRepo(db);
   const articles = new ArticleRepo(db);
   const folderSettings = new FolderSettingsRepo(db);
@@ -38,6 +40,7 @@ export function createContext(): AppContext {
     settings,
     selection,
     runLog,
+    delivery,
     feeds,
     articles,
     folderSettings,

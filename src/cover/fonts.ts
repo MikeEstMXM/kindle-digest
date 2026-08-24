@@ -10,6 +10,23 @@ export interface FontFace {
   style: 'normal' | 'italic';
   /** File name within assets/fonts/ and the EPUB fonts/ directory. */
   file: string;
+  /**
+   * TrueType twin of `file`, in the same directory. librsvg resolves fonts
+   * through fontconfig and ignores `@font-face` webfonts entirely, so the
+   * rasterized cover needs a real font file on a scanned path — woff2 alone
+   * renders in a fallback face. This is also the file text metrics are read
+   * from (opentype.js cannot parse woff2).
+   */
+  ttfFile: string;
+  /**
+   * Family name as it appears *inside* `ttfFile`, when it differs from the
+   * design-facing `family` above. Google exports static instances of a
+   * variable font under the default instance's name, so all three Bricolage
+   * weights self-report as 'Bricolage Grotesque 96pt ExtraBold'. Set this and
+   * `buildFontConfig` emits a fontconfig alias so the SVG can keep asking for
+   * the real name.
+   */
+  fcFamily?: string;
   /** google-webfonts-helper variant id used by the download script. */
   gwfhFamily: string;
   gwfhVariant: string;
@@ -22,6 +39,7 @@ export const FONT_FACES: FontFace[] = [
     weight: 900,
     style: 'normal',
     file: 'PlayfairDisplay-900.woff2',
+    ttfFile: 'PlayfairDisplay-900.ttf',
     gwfhFamily: 'playfair-display',
     gwfhVariant: '900',
   },
@@ -30,6 +48,7 @@ export const FONT_FACES: FontFace[] = [
     weight: 400,
     style: 'normal',
     file: 'PlayfairDisplay-400.woff2',
+    ttfFile: 'PlayfairDisplay-400.ttf',
     gwfhFamily: 'playfair-display',
     gwfhVariant: 'regular',
   },
@@ -38,6 +57,7 @@ export const FONT_FACES: FontFace[] = [
     weight: 400,
     style: 'italic',
     file: 'PlayfairDisplay-400italic.woff2',
+    ttfFile: 'PlayfairDisplay-400italic.ttf',
     gwfhFamily: 'playfair-display',
     gwfhVariant: 'italic',
   },
@@ -47,6 +67,7 @@ export const FONT_FACES: FontFace[] = [
     weight: 400,
     style: 'normal',
     file: 'BebasNeue-400.woff2',
+    ttfFile: 'BebasNeue-400.ttf',
     gwfhFamily: 'bebas-neue',
     gwfhVariant: 'regular',
   },
@@ -56,6 +77,7 @@ export const FONT_FACES: FontFace[] = [
     weight: 400,
     style: 'italic',
     file: 'EBGaramond-400italic.woff2',
+    ttfFile: 'EBGaramond-400italic.ttf',
     gwfhFamily: 'eb-garamond',
     gwfhVariant: 'italic',
   },
@@ -64,6 +86,7 @@ export const FONT_FACES: FontFace[] = [
     weight: 600,
     style: 'normal',
     file: 'EBGaramond-600.woff2',
+    ttfFile: 'EBGaramond-600.ttf',
     gwfhFamily: 'eb-garamond',
     gwfhVariant: '600',
   },
@@ -73,6 +96,8 @@ export const FONT_FACES: FontFace[] = [
     weight: 400,
     style: 'normal',
     file: 'BricolageGrotesque-400.woff2',
+    ttfFile: 'BricolageGrotesque-400.ttf',
+    fcFamily: 'Bricolage Grotesque 96pt ExtraBold',
     gwfhFamily: 'bricolage-grotesque',
     gwfhVariant: 'regular',
   },
@@ -81,6 +106,8 @@ export const FONT_FACES: FontFace[] = [
     weight: 500,
     style: 'normal',
     file: 'BricolageGrotesque-500.woff2',
+    ttfFile: 'BricolageGrotesque-500.ttf',
+    fcFamily: 'Bricolage Grotesque 96pt ExtraBold',
     gwfhFamily: 'bricolage-grotesque',
     gwfhVariant: '500',
   },
@@ -89,6 +116,8 @@ export const FONT_FACES: FontFace[] = [
     weight: 800,
     style: 'normal',
     file: 'BricolageGrotesque-800.woff2',
+    ttfFile: 'BricolageGrotesque-800.ttf',
+    fcFamily: 'Bricolage Grotesque 96pt ExtraBold',
     gwfhFamily: 'bricolage-grotesque',
     gwfhVariant: '800',
   },

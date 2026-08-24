@@ -1,9 +1,11 @@
 import sharp from 'sharp';
 import { escapeHtml } from '../util/html.js';
-import type { LoadedFont } from './fontLoader.js';
 import { templateFor, glyphFor, type TemplateId } from './hash.js';
 import { IMAGE_ADJUST } from './render.js';
-import { FONT_FACES, TEMPLATE_FONTS } from './fonts.js';
+// Imported for its side effect: points fontconfig at assets/fonts so librsvg
+// can resolve the cover families. Must happen before the first text render.
+import './fontconfig.js';
+import { textMeasurer, type TextMeasurer } from './fontMetrics.js';
 import type { CoverInput } from './render.js';
 
 // Target cover dimensions (Kindle Paperwhite 1072×1448 at 300ppi)
@@ -21,7 +23,7 @@ function vh(pct: number): number {
 
 // Title block fit-to-width budget, shared by all four templates: full width minus
 // the 64px side margin on each side.
-const TITLE_BUDGET = W - 2 * vw(6);
+export const TITLE_BUDGET = W - 2 * vw(6);
 
 interface FeedCfg {
   size: number;
@@ -34,10 +36,40 @@ interface FeedCfg {
 }
 
 const FEED_CFGS: Record<TemplateId, FeedCfg> = {
-  broadsheet: { size: 27, weight: '400', uppercase: false, lineHeight: 42, bottomPad: 5, align: 'left', sidePad: 6 },
-  'the-drop': { size: 21, uppercase: true, lineHeight: 33, bottomPad: 7, align: 'left', sidePad: 6 },
-  'the-review': { size: 27, uppercase: false, lineHeight: 42, bottomPad: 7, align: 'center', sidePad: 7 },
-  'the-signal': { size: 23, weight: '400', uppercase: true, lineHeight: 37, bottomPad: 5, align: 'left', sidePad: 6 },
+  broadsheet: {
+    size: 27,
+    weight: '400',
+    uppercase: false,
+    lineHeight: 42,
+    bottomPad: 5,
+    align: 'left',
+    sidePad: 6,
+  },
+  'the-drop': {
+    size: 21,
+    uppercase: true,
+    lineHeight: 33,
+    bottomPad: 7,
+    align: 'left',
+    sidePad: 6,
+  },
+  'the-review': {
+    size: 27,
+    uppercase: false,
+    lineHeight: 42,
+    bottomPad: 7,
+    align: 'center',
+    sidePad: 7,
+  },
+  'the-signal': {
+    size: 23,
+    weight: '400',
+    uppercase: true,
+    lineHeight: 37,
+    bottomPad: 5,
+    align: 'left',
+    sidePad: 6,
+  },
 };
 
 const GRADIENTS: Record<TemplateId, Array<[number, string]>> = {
@@ -77,40 +109,70 @@ const FONT_FAMILIES: Record<TemplateId, string> = {
   'the-signal': "'Bricolage Grotesque', 'Liberation Sans', sans-serif",
 };
 
-// Average glyph-advance ratio (advance width / font size) per template face,
-// calibrated against the sample strings in the design prototype ("World News",
-// "Culture", "Longreads", "Tech & Startups"). sharp/librsvg has no text
-// measurement API, so this is an estimate, not exact metrics — err on the
-// side of shrinking a title rather than letting it overflow.
-const TITLE_WIDTH_RATIO: Record<TemplateId, number> = {
-  broadsheet: 0.56,
-  'the-drop': 0.72,
-  'the-review': 0.48,
-  'the-signal': 0.62,
+/**
+ * The face each template actually sets its *title* in — family, plus the
+ * weight and style carried on that `<text>` element. Titles are measured with
+ * the same face librsvg will resolve; measuring a different weight or style is
+ * a larger error than the estimate this replaced.
+ */
+const TITLE_FACE: Record<
+  TemplateId,
+  { family: string; weight: number; style: 'normal' | 'italic' }
+> = {
+  broadsheet: { family: 'Playfair Display', weight: 900, style: 'normal' },
+  'the-drop': { family: 'Bebas Neue', weight: 400, style: 'normal' },
+  'the-review': { family: 'EB Garamond', weight: 400, style: 'italic' },
+  'the-signal': { family: 'Bricolage Grotesque', weight: 800, style: 'normal' },
 };
 
-function estimateTextWidth(text: string, size: number, ratio: number, letterSpacingEm: number): number {
-  const n = text.length;
-  return n * size * ratio + Math.max(0, n - 1) * letterSpacingEm * size;
+/** Measurer for a template's title face. */
+function titleMeasurer(id: TemplateId): TextMeasurer {
+  const f = TITLE_FACE[id];
+  return textMeasurer(f.family, f.weight, f.style);
+}
+
+/**
+ * Rendered width of a line: the font's own advance width, plus the tracking
+ * SVG applies between glyphs (librsvg honours `em` units here — the same
+ * string at `0em`, `-0.035em` and the equivalent `px` measures 761, 717 and
+ * 717 respectively).
+ */
+function lineWidth(
+  text: string,
+  size: number,
+  measure: TextMeasurer,
+  letterSpacingEm: number,
+): number {
+  return measure(text, size) + Math.max(0, text.length - 1) * letterSpacingEm * size;
 }
 
 /** Shrink (never wrap) until the text fits the shared title budget. */
-function fitShrinkOnly(text: string, maxSize: number, ratio: number, letterSpacingEm: number): number {
+function fitShrinkOnly(
+  text: string,
+  maxSize: number,
+  measure: TextMeasurer,
+  letterSpacingEm: number,
+): number {
   let size = maxSize;
-  while (size > 16 && estimateTextWidth(text, size, ratio, letterSpacingEm) > TITLE_BUDGET) {
+  while (size > 16 && lineWidth(text, size, measure, letterSpacingEm) > TITLE_BUDGET) {
     size -= 2;
   }
   return size;
 }
 
 /** Split on the last space that keeps line 1 under the width budget; never mid-word. */
-function splitAtSpace(text: string, size: number, ratio: number, letterSpacingEm: number): [string, string] {
+function splitAtSpace(
+  text: string,
+  size: number,
+  measure: TextMeasurer,
+  letterSpacingEm: number,
+): [string, string] {
   const words = text.split(' ');
   if (words.length < 2) return [text, ''];
   let splitIdx = 1;
   for (let i = 1; i < words.length; i++) {
     const candidate = words.slice(0, i).join(' ');
-    if (estimateTextWidth(candidate, size, ratio, letterSpacingEm) <= TITLE_BUDGET) splitIdx = i;
+    if (lineWidth(candidate, size, measure, letterSpacingEm) <= TITLE_BUDGET) splitIdx = i;
     else break;
   }
   return [words.slice(0, splitIdx).join(' '), words.slice(splitIdx).join(' ')];
@@ -126,40 +188,32 @@ interface SignalFit {
  * for a single-line fit; if it's still too wide there, wrap to two lines at
  * that size and keep shrinking both lines together if needed. Caps at two lines.
  */
-function fitSignalTitle(text: string, maxSize: number, ratio: number, letterSpacingEm: number): SignalFit {
+function fitSignalTitle(
+  text: string,
+  maxSize: number,
+  measure: TextMeasurer,
+  letterSpacingEm: number,
+): SignalFit {
   const floor = Math.round(maxSize * 0.75);
   let size = maxSize;
-  while (size > floor && estimateTextWidth(text, size, ratio, letterSpacingEm) > TITLE_BUDGET) {
+  while (size > floor && lineWidth(text, size, measure, letterSpacingEm) > TITLE_BUDGET) {
     size -= 2;
   }
-  if (estimateTextWidth(text, size, ratio, letterSpacingEm) <= TITLE_BUDGET) {
+  if (lineWidth(text, size, measure, letterSpacingEm) <= TITLE_BUDGET) {
     return { lines: [text], size };
   }
 
   size = floor;
-  let [line1, line2] = splitAtSpace(text, size, ratio, letterSpacingEm);
+  let [line1, line2] = splitAtSpace(text, size, measure, letterSpacingEm);
   while (
     size > 16 &&
-    (estimateTextWidth(line1, size, ratio, letterSpacingEm) > TITLE_BUDGET ||
-      estimateTextWidth(line2, size, ratio, letterSpacingEm) > TITLE_BUDGET)
+    (lineWidth(line1, size, measure, letterSpacingEm) > TITLE_BUDGET ||
+      lineWidth(line2, size, measure, letterSpacingEm) > TITLE_BUDGET)
   ) {
     size -= 2;
-    [line1, line2] = splitAtSpace(text, size, ratio, letterSpacingEm);
+    [line1, line2] = splitAtSpace(text, size, measure, letterSpacingEm);
   }
   return { lines: line2 ? [line1, line2] : [line1], size };
-}
-
-function buildFontFaceCss(templateId: TemplateId, fonts: LoadedFont[]): string {
-  const neededFamily = TEMPLATE_FONTS[templateId];
-  const fontMap = new Map(fonts.map((f) => [f.file, f.data]));
-  return FONT_FACES.filter((f) => f.family === neededFamily)
-    .map((face) => {
-      const data = fontMap.get(face.file);
-      if (!data) return '';
-      return `@font-face{font-family:'${face.family}';font-weight:${face.weight};font-style:${face.style};src:url('data:font/woff2;base64,${data.toString('base64')}') format('woff2');}`;
-    })
-    .filter(Boolean)
-    .join('');
 }
 
 function esc(s: string): string {
@@ -239,7 +293,7 @@ function buildBroadsheetTitle(input: CoverInput, theme: 'light' | 'dark'): strin
   const tc = (dark: string, light: string) => (theme === 'dark' ? dark : light);
   const fontFamily = FONT_FAMILIES.broadsheet;
   const x = vw(6);
-  const size = fitShrinkOnly(input.folder, 140, TITLE_WIDTH_RATIO.broadsheet, -0.035);
+  const size = fitShrinkOnly(input.folder, 140, titleMeasurer('broadsheet'), -0.035);
   const titleFill = tc('white', '#1a1a1a');
   const dateFill = tc('rgba(255,255,255,0.92)', 'rgba(0,0,0,0.92)');
   const ruleFill = tc('white', '#1a1a1a');
@@ -261,7 +315,7 @@ function buildDropTitle(input: CoverInput, theme: 'light' | 'dark'): string[] {
   const x = vw(6);
   const titleText = input.folder.toUpperCase();
   const dateText = input.dateLabel.toUpperCase();
-  const size = fitShrinkOnly(titleText, 230, TITLE_WIDTH_RATIO['the-drop'], 0.02);
+  const size = fitShrinkOnly(titleText, 230, titleMeasurer('the-drop'), 0.02);
   const textFill = tc('white', '#1a1a1a');
   const halo = tc('#000', '#fff');
   return [
@@ -277,7 +331,7 @@ function buildReviewTitle(input: CoverInput, theme: 'light' | 'dark'): string[] 
   const tc = (dark: string, light: string) => (theme === 'dark' ? dark : light);
   const fontFamily = FONT_FAMILIES['the-review'];
   const cx = W / 2;
-  const size = fitShrinkOnly(input.folder, 150, TITLE_WIDTH_RATIO['the-review'], -0.02);
+  const size = fitShrinkOnly(input.folder, 150, titleMeasurer('the-review'), -0.02);
   const titleFill = tc('white', '#1a1a1a');
   const dateFill = tc('rgba(255,255,255,0.92)', 'rgba(0,0,0,0.92)');
   const ruleStroke = tc('rgba(255,255,255,0.8)', 'rgba(0,0,0,0.8)');
@@ -299,7 +353,7 @@ function buildSignalTitle(input: CoverInput, theme: 'light' | 'dark'): string[] 
   const x = vw(6);
   const titleText = input.folder.toUpperCase();
   const dateText = input.dateLabel.toUpperCase();
-  const fit = fitSignalTitle(titleText, 150, TITLE_WIDTH_RATIO['the-signal'], -0.02);
+  const fit = fitSignalTitle(titleText, 150, titleMeasurer('the-signal'), -0.02);
   const lines = fit.lines.length;
 
   const lineAdvance = 138;
@@ -332,12 +386,13 @@ function buildSignalTitle(input: CoverInput, theme: 'light' | 'dark'): string[] 
   return els;
 }
 
-const TITLE_BUILDERS: Record<TemplateId, (input: CoverInput, theme: 'light' | 'dark') => string[]> = {
-  broadsheet: buildBroadsheetTitle,
-  'the-drop': buildDropTitle,
-  'the-review': buildReviewTitle,
-  'the-signal': buildSignalTitle,
-};
+const TITLE_BUILDERS: Record<TemplateId, (input: CoverInput, theme: 'light' | 'dark') => string[]> =
+  {
+    broadsheet: buildBroadsheetTitle,
+    'the-drop': buildDropTitle,
+    'the-review': buildReviewTitle,
+    'the-signal': buildSignalTitle,
+  };
 
 function buildFeedList(
   cfg: FeedCfg,
@@ -370,8 +425,8 @@ function buildFeedList(
 
 // Per-template image adjustments for light theme (brighten, reduce contrast).
 const IMAGE_ADJUST_LIGHT: Record<TemplateId, { contrast: number; brightness: number }> = {
-  broadsheet:   { contrast: 0.85, brightness: 1.5 },
-  'the-drop':   { contrast: 0.8,  brightness: 2.0 },
+  broadsheet: { contrast: 0.85, brightness: 1.5 },
+  'the-drop': { contrast: 0.8, brightness: 2.0 },
   'the-review': { contrast: 0.85, brightness: 1.6 },
   'the-signal': { contrast: 0.85, brightness: 1.5 },
 };
@@ -379,11 +434,9 @@ const IMAGE_ADJUST_LIGHT: Record<TemplateId, { contrast: number; brightness: num
 export function buildCoverSvg(
   templateId: TemplateId,
   input: CoverInput & { glyph: string },
-  fonts: LoadedFont[],
   theme: 'light' | 'dark',
 ): string {
   const fontFamily = FONT_FAMILIES[templateId];
-  const fontFaceCss = buildFontFaceCss(templateId, fonts);
 
   const gradBase = theme === 'light' ? '255,255,255' : '0,0,0';
   const gradientStops = GRADIENTS[templateId]
@@ -414,7 +467,6 @@ export function buildCoverSvg(
 
   return `<svg xmlns="http://www.w3.org/2000/svg" width="${W}" height="${H}">
 <defs>
-<style>${fontFaceCss}</style>
 <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">${gradientStops}</linearGradient>
 <filter id="tshadow" x="-25%" y="-25%" width="150%" height="150%"><feDropShadow dx="0" dy="5" stdDeviation="14" flood-color="${shadowFlood}" flood-opacity="0.85"/></filter>
 </defs>
@@ -433,7 +485,6 @@ ${feedEls.join('\n')}
 export async function buildCoverJpeg(
   input: CoverInput,
   backgroundRaw: Buffer | undefined,
-  fonts: LoadedFont[],
   templateOverride?: TemplateId | null,
   theme: 'light' | 'dark' = 'dark',
 ): Promise<Buffer> {
@@ -454,7 +505,7 @@ export async function buildCoverJpeg(
     : sharp({ create: { width: W, height: H, channels: 3, background: baseColor } });
 
   // Build SVG overlay
-  const svg = buildCoverSvg(templateId, { ...input, glyph }, fonts, theme);
+  const svg = buildCoverSvg(templateId, { ...input, glyph }, theme);
 
   return baseImg
     .composite([{ input: Buffer.from(svg), top: 0, left: 0 }])

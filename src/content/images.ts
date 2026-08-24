@@ -23,30 +23,52 @@ export function findCoverImageUrl(articleHtml: string, pageHtml?: string): strin
       pageHtml.match(
         /<meta[^>]+property=["']og:image(?::url)?["'][^>]+content=["']([^"']+)["']/i,
       ) ||
-      pageHtml.match(
-        /<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image(?::url)?["']/i,
-      );
+      pageHtml.match(/<meta[^>]+content=["']([^"']+)["'][^>]+property=["']og:image(?::url)?["']/i);
     if (og?.[1]) return og[1];
   }
   const img = articleHtml.match(/<img[^>]+src=["']([^"']+)["']/i);
   return img?.[1];
 }
 
-/** Download an image to a Buffer. Throws on non-2xx. */
-export async function downloadImage(
-  url: string,
-  fetchFn: typeof fetch = fetch,
-): Promise<Buffer> {
-  const res = await fetchFn(url, {
-    headers: { 'User-Agent': 'kindle-digest/1.0 (+image fetch)' },
-  });
-  if (!res.ok) throw new Error(`Image fetch failed: ${res.status}`);
-  return Buffer.from(await res.arrayBuffer());
+/** Wall-clock bound on a single image download. */
+const IMAGE_FETCH_TIMEOUT_MS = 15_000;
+
+/**
+ * Download an image to a Buffer. Throws on non-2xx or timeout.
+ *
+ * The timeout is essential, not defensive: this runs up to 5x per article, and
+ * without it a single hung image host stalls an entire digest build forever.
+ */
+export async function downloadImage(url: string, fetchFn: typeof fetch = fetch): Promise<Buffer> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetchFn(url, {
+      headers: { 'User-Agent': 'kindle-digest/1.0 (+image fetch)' },
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`Image fetch failed: ${res.status}`);
+    return Buffer.from(await res.arrayBuffer());
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /**
+ * Upper bound on decoded source pixels (~50 MP).
+ *
+ * libvips decodes to raw pixels *before* resizing, so the cost of an image is
+ * set by its source dimensions, not the ≤1000px we keep: a 20000×20000 PNG
+ * would reserve well over a gigabyte on a 512 MB VM. Well above any real
+ * article image, low enough to fail fast on a pathological one — and failing
+ * is fine, since callers already drop images they cannot process.
+ */
+const MAX_INPUT_PIXELS = 50_000_000;
+
+/**
  * Convert to grayscale (server-side, per spec — never CSS filters), apply
- * template-specific contrast/brightness, resize to fit max 1200×900, JPEG q70.
+ * template-specific contrast/brightness, crop-to-fill exactly 1600×2400
+ * (Kindle-cover source resolution), JPEG q85.
  */
 export async function processCoverImage(
   input: Buffer,
@@ -55,7 +77,7 @@ export async function processCoverImage(
   // linear(a, b): out = a*in + b. For contrast around 128: b = 128 - 128*a.
   const a = adjust.contrast;
   const b = 128 - 128 * a;
-  const pipeline = sharp(input)
+  const pipeline = sharp(input, { limitInputPixels: MAX_INPUT_PIXELS })
     .grayscale()
     .linear(a, b)
     .modulate({ brightness: adjust.brightness })
@@ -67,7 +89,7 @@ export async function processCoverImage(
 
 /** Grayscale + downscale an in-article image for e-ink and small EPUB size. */
 export async function processArticleImage(input: Buffer): Promise<ProcessedImage> {
-  const { data, info } = await sharp(input)
+  const { data, info } = await sharp(input, { limitInputPixels: MAX_INPUT_PIXELS })
     .grayscale()
     .resize({ width: 1000, fit: 'inside', withoutEnlargement: true })
     .jpeg({ quality: 72 })

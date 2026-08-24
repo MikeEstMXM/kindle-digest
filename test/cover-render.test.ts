@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import sharp from 'sharp';
 import { renderCover } from '../src/cover/render.js';
-import { buildCoverSvg } from '../src/cover/composite.js';
+import { buildCoverSvg, buildCoverJpeg } from '../src/cover/composite.js';
 import { TEMPLATES, templateFor, glyphFor, type TemplateId } from '../src/cover/hash.js';
-import { FONT_FACES, TEMPLATE_FONTS } from '../src/cover/fonts.js';
+import { TEMPLATE_FONTS } from '../src/cover/fonts.js';
 
 function sampleInput(folder: string) {
   return {
@@ -17,12 +18,8 @@ function sampleInput(folder: string) {
   };
 }
 
-// Fonts aren't downloaded in CI; a dummy buffer per registered face is enough
-// to exercise the @font-face embedding path without hitting the filesystem.
-const DUMMY_FONTS = FONT_FACES.map((f) => ({ file: f.file, data: Buffer.from('woff2-bytes') }));
-
 function svgFor(folder: string, templateId: TemplateId, theme: 'light' | 'dark' = 'dark') {
-  return buildCoverSvg(templateId, { ...sampleInput(folder), glyph: glyphFor(folder) }, DUMMY_FONTS, theme);
+  return buildCoverSvg(templateId, { ...sampleInput(folder), glyph: glyphFor(folder) }, theme);
 }
 
 /** Find one folder name that hashes to each template, for full coverage. */
@@ -53,11 +50,15 @@ describe('cover XHTML (render.ts)', () => {
 });
 
 describe('cover SVG (composite.ts)', () => {
-  it('embeds @font-face with base64 woff2 data (no external CDN)', () => {
+  it('carries no @font-face and no external font URL', () => {
+    // librsvg resolves families through fontconfig and ignores @font-face
+    // webfonts, so an embedded base64 face is inert weight (5-22 KB per cover)
+    // that also reads as though fonts were handled when they were not.
+    // Fonts reach the renderer via src/cover/fontconfig.ts instead.
     for (const id of TEMPLATES) {
       const svg = svgFor(folderForTemplate(TEMPLATES.indexOf(id)), id);
-      expect(svg).toContain('@font-face');
-      expect(svg).toMatch(/url\('data:font\/woff2;base64,/);
+      expect(svg).not.toContain('@font-face');
+      expect(svg).not.toContain('data:font/woff2;base64,');
       expect(svg).not.toMatch(/https?:\/\/fonts\.g/i);
     }
   });
@@ -128,8 +129,11 @@ describe('cover SVG (composite.ts)', () => {
   });
 
   it('caps the feed list at 8 with an "…and N more" row', () => {
-    const input = { ...sampleInput('Technology'), feeds: Array.from({ length: 11 }, (_, i) => ({ name: `Feed ${i}`, count: i })) };
-    const svg = buildCoverSvg('broadsheet', { ...input, glyph: glyphFor('Technology') }, DUMMY_FONTS, 'dark');
+    const input = {
+      ...sampleInput('Technology'),
+      feeds: Array.from({ length: 11 }, (_, i) => ({ name: `Feed ${i}`, count: i })),
+    };
+    const svg = buildCoverSvg('broadsheet', { ...input, glyph: glyphFor('Technology') }, 'dark');
     expect(svg).toContain('…and 3 more');
     expect(svg).not.toContain('Feed 8<');
   });
@@ -138,5 +142,57 @@ describe('cover SVG (composite.ts)', () => {
     const svg = svgFor('World News', 'broadsheet', 'light');
     expect(svg).toContain('#1a1a1a');
     expect(svg).not.toContain('fill="white"');
+  });
+});
+
+/**
+ * Everything above asserts on the SVG string. These two rasterize, because the
+ * cover that reaches the Kindle is a JPEG and the SVG is only an intermediate:
+ * a change that renders valid markup but a wrong-sized or colour-tinted image
+ * would pass every test above.
+ */
+describe('buildCoverJpeg', () => {
+  it('produces a JPEG at exactly 1072x1448, with and without a background image', async () => {
+    const bg = await sharp({
+      create: { width: 800, height: 600, channels: 3, background: { r: 90, g: 140, b: 200 } },
+    })
+      .jpeg()
+      .toBuffer();
+
+    for (const backgroundRaw of [bg, undefined]) {
+      for (const theme of ['dark', 'light'] as const) {
+        const jpeg = await buildCoverJpeg(sampleInput('Technology'), backgroundRaw, null, theme);
+        const meta = await sharp(jpeg).metadata();
+        expect(meta.format).toBe('jpeg');
+        expect(meta.width).toBe(1072);
+        expect(meta.height).toBe(1448);
+      }
+    }
+  });
+
+  it('stays grayscale even when the source image is strongly coloured', async () => {
+    const bg = await sharp({
+      create: { width: 800, height: 600, channels: 3, background: { r: 200, g: 40, b: 90 } },
+    })
+      .jpeg()
+      .toBuffer();
+
+    const jpeg = await buildCoverJpeg(sampleInput('Technology'), bg, null, 'dark');
+    // This strip sits over the background photo, not over an opaque overlay —
+    // verified by rendering two differently coloured sources and confirming the
+    // sampled luminance moves (67 vs 138). Were it overlay, the assertion below
+    // would pass no matter what and prove nothing.
+    const { data } = await sharp(jpeg)
+      .extract({ left: 20, top: 400, width: 40, height: 10 })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+
+    // Grayscale means the three channels agree; a colour cast shows up as a
+    // gap between them. Tolerance of 4 absorbs JPEG chroma subsampling.
+    for (let i = 0; i < data.length / 3; i++) {
+      const p = i * 3;
+      expect(Math.abs(data[p] - data[p + 1])).toBeLessThanOrEqual(4);
+      expect(Math.abs(data[p + 1] - data[p + 2])).toBeLessThanOrEqual(4);
+    }
   });
 });

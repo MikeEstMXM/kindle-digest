@@ -1,4 +1,8 @@
 import JSZip from 'jszip';
+import { createWriteStream, createReadStream } from 'node:fs';
+import { mkdir, stat } from 'node:fs/promises';
+import { dirname } from 'node:path';
+import { pipeline } from 'node:stream/promises';
 import { buildNav, buildOpf, CONTAINER_XML, type ManifestItem, type NavEntry } from './opf.js';
 import { contentCss } from './css.js';
 import type { NcxSection } from './ncx.js';
@@ -10,13 +14,26 @@ export interface EpubArticle {
   filename: string;
   /** Nav label (article title). */
   title: string;
-  xhtml: string;
+  /**
+   * Rendered page, either inline or staged on disk. Long digests must use
+   * `path`: retaining every article's XHTML until zip time is what made the
+   * JS heap grow with article count.
+   */
+  xhtml?: string;
+  path?: string;
 }
 
 export interface EpubBinary {
   /** href relative to OEBPS, e.g. "images/cover.jpg". */
   href: string;
-  data: Buffer;
+  /**
+   * Either the bytes, or a path to stage the bytes from. Long digests should
+   * always use `path`: holding every article image as a Buffer until zip time
+   * made peak memory scale with article count, which is what put large digests
+   * over the VM's limit.
+   */
+  data?: Buffer;
+  path?: string;
   mediaType: string;
   /** Mark as the EPUB cover-image (library thumbnail). At most one. */
   isCover?: boolean;
@@ -155,8 +172,8 @@ export function buildManifestAndSpine(input: EpubInput): {
   return { manifest, spine, nav, ncxSections, firstArticleFilename };
 }
 
-/** Produce the .epub as a Buffer. */
-export async function buildEpub(input: EpubInput): Promise<Buffer> {
+/** Assemble the in-memory zip tree shared by the Buffer and streaming writers. */
+function assembleZip(input: EpubInput): JSZip {
   const { manifest, spine, nav, firstArticleFilename } = buildManifestAndSpine(input);
   const language = input.language ?? 'en';
   const modified = new Date().toISOString().replace(/\.\d{3}Z$/, 'Z');
@@ -198,17 +215,53 @@ export async function buildEpub(input: EpubInput): Promise<Buffer> {
   oebps.file('cover.xhtml', input.coverXhtml);
   oebps.file('toc.xhtml', input.tocXhtml);
   oebps.file('diagnostics.xhtml', input.diagnosticsXhtml);
-  for (const a of input.articles) oebps.file(a.filename, a.xhtml);
+  for (const a of input.articles) {
+    oebps.file(a.filename, a.path ? createReadStream(a.path) : a.xhtml!);
+  }
   if (input.feedGroups) {
     for (const g of input.feedGroups) oebps.file(g.filename, g.xhtml);
   }
   if (input.ncxXml) oebps.file('toc.ncx', input.ncxXml);
   for (const f of input.fonts) oebps.file(`fonts/${f.file}`, f.data);
-  for (const img of input.images) oebps.file(img.href, img.data);
+  for (const img of input.images) {
+    // Streamed straight from the staging file when available, so the bytes
+    // never all sit in memory at once.
+    oebps.file(img.href, img.path ? createReadStream(img.path) : img.data!);
+  }
 
-  return zip.generateAsync({
+  return zip;
+}
+
+/**
+ * Produce the .epub as a Buffer. Convenient for tests and small builds, but it
+ * holds the source buffers, JSZip's copies and the DEFLATE output live at once
+ * (~3x the payload). Prefer `buildEpubToFile` for real digests.
+ */
+export async function buildEpub(input: EpubInput): Promise<Buffer> {
+  return assembleZip(input).generateAsync({
     type: 'nodebuffer',
     mimeType: 'application/epub+zip',
     compression: 'DEFLATE',
   });
+}
+
+/**
+ * Stream the .epub straight to disk and return its size. Avoids materialising
+ * the whole archive in the heap, and the file on the volume is what makes a
+ * failed send retryable without rebuilding. Returns bytes written.
+ */
+export async function buildEpubToFile(input: EpubInput, path: string): Promise<number> {
+  await mkdir(dirname(path), { recursive: true });
+  const zip = assembleZip(input);
+
+  await pipeline(
+    zip.generateNodeStream({
+      type: 'nodebuffer',
+      streamFiles: true,
+      compression: 'DEFLATE',
+    }),
+    createWriteStream(path),
+  );
+
+  return (await stat(path)).size;
 }

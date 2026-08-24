@@ -70,7 +70,7 @@ rationale.
 ```bash
 git clone <repo> && cd kindle-digest
 npm install
-npm run fetch-fonts      # downloads + embeds the cover fonts (woff2)
+npm run fetch-fonts      # cover fonts: woff2 (EPUB) + ttf (cover rendering)
 
 cp .env.example .env     # fill in SMTP vars (all others are optional)
 npm run dev              # http://localhost:3000
@@ -100,6 +100,10 @@ Copy `.env.example` to `.env` and set:
 | `DELIVERY_TIME` / `TIMEZONE` | – | Daily send time (HH:mm, 24h) and IANA timezone. Defaults: `06:30` / `America/New_York`. |
 | `DATABASE_PATH` | – | SQLite path. On Fly this lives on the mounted volume (`/data/kindle-digest.sqlite`). |
 | `FULLTEXT_MIN_CHARS` | – | Min visible-text chars before feed content is treated as "full" (else Readability fallback). Default `1800`. |
+| `DIGEST_DIR` | – | Where built `.epub` files are staged. On Fly this must be on the volume (`/data/digests`) so a failed send can retry without rebuilding. |
+| `ALERT_EMAIL` | – | Where delivery-failure alerts go. Defaults to `SMTP_FROM`. |
+| `DELIVERY_MAX_ATTEMPTS` | – | Retries before a delivery is marked failed and alerted. Default `5`. |
+| `BUILD_CONCURRENCY` | – | Articles fetched/rendered in parallel. Default `4`. Trades peak memory for build speed — lower it to `2` if builds run hot on a 512 MB VM. |
 
 No OAuth tokens or encryption keys are required.
 
@@ -110,7 +114,7 @@ No OAuth tokens or encryption keys are required.
 | Command | Description |
 |---------|-------------|
 | `npm run dev` | Dev server + scheduler (tsx watch). |
-| `npm run fetch-fonts` | Download + embed the cover fonts. |
+| `npm run fetch-fonts` | Download the cover fonts (woff2 + ttf). Both formats are committed, so this is normally a no-op. |
 | `npm test` | Run the test suite (core logic). |
 | `npm run lint` / `npm run typecheck` | Lint / type-check. |
 | `npm run build` && `npm start` | Compile and run production build. |
@@ -150,6 +154,38 @@ fly logs --app kindle-digest          # tail live logs
 fly ssh console --app kindle-digest   # shell into the container
 fly deploy                            # redeploy after code changes
 ```
+
+### Deploying without a terminal
+
+`.github/workflows/deploy.yml` deploys from the browser: **Actions → Deploy to
+Fly → Run workflow**, choosing the branch to ship. It is `workflow_dispatch`
+only — nothing deploys as a side effect of a push, so a deploy is always a
+deliberate act.
+
+Two one-time setup steps, both browser-only:
+
+1. **Fly dashboard → `kindle-digest` → Tokens** → create a **deploy token**.
+   Scope it to this app; an account-wide token in CI can reach everything else
+   you own.
+2. **GitHub → repo Settings → Secrets and variables → Actions** → new repository
+   secret named `FLY_API_TOKEN`, pasting that token.
+
+Until the secret exists the workflow fails with an authentication error.
+
+### Checking what a build cost
+
+Every EPUB's diagnostics page (last page in the book) reports build time, images
+embedded, and **peak memory against the 512 MB VM**, with the
+`BUILD_CONCURRENCY` that produced it. To read it without waiting for Kindle
+delivery, use the **Download** button on the dashboard and open the file.
+
+The memory figure is measured *before* the EPUB is zipped, so it excludes final
+assembly — about 30 MB short of the whole-build peak on a large digest. The
+complete figure is stored in `run_log` and appears in failure-alert emails.
+
+If peak memory is uncomfortably close to 512 MB, lower the concurrency from the
+Fly dashboard (Secrets → `BUILD_CONCURRENCY=2`); it takes effect on restart, no
+redeploy needed.
 
 ---
 

@@ -5,7 +5,7 @@
  *
  * Run: npx tsx scripts/smoke-epub.ts
  */
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { mkdirSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import JSZip from 'jszip';
@@ -54,23 +54,24 @@ async function main(): Promise<void> {
   const fetchImage = (async () =>
     new Response(new Uint8Array(sampleImage), { status: 200 })) as unknown as typeof fetch;
 
+  const outDir = join(__dirname, '..', 'out');
+  mkdirSync(outDir, { recursive: true });
+
   const built = await buildFolderDigest('Technology', articles, 3, {
     isoDate: '2026-06-07',
     timezone: 'America/New_York',
     author: 'Smoke Test',
     minChars: 1800,
     fonts,
+    outDir,
     fetchPage,
     fetchImage,
   });
 
-  const outDir = join(__dirname, '..', 'out');
-  mkdirSync(outDir, { recursive: true });
-  const outPath = join(outDir, 'sample.epub');
-  writeFileSync(outPath, built.epub);
+  const outPath = built.epubPath;
 
   // Validate structure.
-  const zip = await JSZip.loadAsync(built.epub);
+  const zip = await JSZip.loadAsync(readFileSync(outPath));
   const opf = await zip.file('OEBPS/content.opf')!.async('string');
   const cover = await zip.file('OEBPS/cover.xhtml')!.async('string');
   const diag = await zip.file('OEBPS/diagnostics.xhtml')!.async('string');
@@ -95,7 +96,7 @@ async function main(): Promise<void> {
     console.log(`${pass ? '✓' : '✗'} ${name}`);
     if (!pass) ok = false;
   }
-  console.log(`\nWrote ${outPath} (${(built.epub.length / 1024).toFixed(1)} KB)`);
+  console.log(`\nWrote ${outPath} (${(built.epubBytes / 1024).toFixed(1)} KB)`);
   if (!ok) process.exit(1);
 }
 
