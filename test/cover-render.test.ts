@@ -1,19 +1,27 @@
 import { describe, it, expect } from 'vitest';
-import { renderCover } from '../src/cover/render.js';
+import sharp from 'sharp';
+import { buildCoverSvg, buildCoverJpeg } from '../src/cover/composite.js';
 import { TEMPLATES, templateFor, glyphFor } from '../src/cover/hash.js';
-import { TEMPLATE_FONTS } from '../src/cover/fonts.js';
+import { loadFontBuffers } from '../src/cover/fontLoader.js';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 
-function sampleInput(folder: string, withImage = true) {
+const __dirname = dirname(fileURLToPath(import.meta.url));
+const FONTS_DIR = join(__dirname, '..', 'assets', 'fonts');
+const FONTS = loadFontBuffers(FONTS_DIR);
+
+const ISO_DATE = '2026-06-07';
+
+function sampleInput(folder: string) {
   return {
     folder,
     weekday: 'Saturday',
-    isoDate: '2026-06-07',
+    isoDate: ISO_DATE,
     dateLabel: 'June 7, 2026',
     feeds: [
       { name: 'Ars Technica', count: 4 },
       { name: 'The Verge', count: 2 },
     ],
-    backgroundImageHref: withImage ? 'images/cover.jpg' : undefined,
   };
 }
 
@@ -26,85 +34,143 @@ function folderForTemplate(idx: number): string {
   throw new Error(`no folder found for template ${idx}`);
 }
 
-describe('cover rendering', () => {
-  it('embeds @font-face with local woff2 (no external CDN)', () => {
-    const { xhtml } = renderCover(sampleInput('Technology'));
-    expect(xhtml).toContain('@font-face');
-    expect(xhtml).toMatch(/url\('fonts\/[^']+\.woff2'\)/);
-    expect(xhtml).not.toMatch(/https?:\/\/fonts\.g/i);
-    expect(xhtml).not.toContain('cdn');
-  });
+function svgFor(folder: string, theme: 'light' | 'dark' = 'dark'): string {
+  const templateId = templateFor(folder);
+  const input = { ...sampleInput(folder), glyph: glyphFor(folder) };
+  return buildCoverSvg(templateId, input, FONTS, theme);
+}
 
-  it('renders the correct template font for each template', () => {
+describe('cover rendering (SVG overlay)', () => {
+  it('renders weekday and folder text for every template', () => {
     for (let i = 0; i < TEMPLATES.length; i++) {
       const folder = folderForTemplate(i);
-      const { templateId, xhtml } = renderCover(sampleInput(folder));
-      expect(templateId).toBe(TEMPLATES[i]);
-      expect(xhtml).toContain(`font-family: '${TEMPLATE_FONTS[templateId]}'`);
+      const svg = svgFor(folder);
+      const wd = TEMPLATES[i] === 'the-drop' || TEMPLATES[i] === 'the-signal' ? 'SATURDAY' : 'Saturday';
+      expect(svg).toContain(wd);
+      expect(svg).toContain(`>${folder}<`);
     }
   });
 
-  it('places weekday (title) and folder (subtitle) as adjacent siblings', () => {
-    const { xhtml } = renderCover(sampleInput('Technology'));
-    // weekday div immediately followed by folder div inside title-block.
-    expect(xhtml).toMatch(
-      /<div class="weekday">Saturday<\/div>\s*<div class="folder">Technology<\/div>/,
-    );
+  it('renders the date, paired with the weekday, for every template', () => {
+    for (let i = 0; i < TEMPLATES.length; i++) {
+      const templateId = TEMPLATES[i];
+      const folder = folderForTemplate(i);
+      const svg = svgFor(folder);
+
+      const uppercase = templateId === 'the-drop' || templateId === 'the-signal';
+      const expectedDate = uppercase ? 'JUN 07' : 'Jun 07';
+      const expectedWeekday = uppercase ? 'SATURDAY' : 'Saturday';
+
+      // Parse every <text> element (attrs + content) in source order. The
+      // bottom zone is built bottom-up: folder, then date, then weekday last.
+      const textEls = [...svg.matchAll(/<text([^>]*)>([^<]*)<\/text>/g)].map((m) => ({
+        fontSize: Number(m[1].match(/font-size="(\d+)"/)?.[1]),
+        content: m[2],
+      }));
+      const folderIdx = textEls.findIndex((t) => t.content === folder);
+      const dateIdx = textEls.findIndex((t) => t.content === expectedDate);
+      const weekdayIdx = textEls.findIndex((t) => t.content === expectedWeekday);
+
+      expect(folderIdx).toBeGreaterThan(-1);
+      expect(dateIdx).toBeGreaterThan(-1);
+      expect(weekdayIdx).toBeGreaterThan(-1);
+      // Never the long form.
+      expect(svg).not.toContain('June 7, 2026');
+
+      // Date sits directly between folder and weekday — a tight adjacent
+      // pair with weekday, with folder immediately before it.
+      expect(folderIdx).toBe(dateIdx - 1);
+      expect(weekdayIdx).toBe(dateIdx + 1);
+
+      // Date font-size is ~60% of the weekday font-size.
+      const ratio = textEls[dateIdx].fontSize / textEls[weekdayIdx].fontSize;
+      expect(ratio).toBeGreaterThan(0.55);
+      expect(ratio).toBeLessThan(0.65);
+    }
   });
 
-  it('keeps title-block before divider before feed-list (no overlap, flex spacer present)', () => {
-    const { xhtml } = renderCover(sampleInput('Technology'));
-    const spacer = xhtml.indexOf('class="spacer"');
-    const title = xhtml.indexOf('class="title-block"');
-    const divider = xhtml.indexOf('class="divider"');
-    const feeds = xhtml.indexOf('class="feed-list"');
-    expect(spacer).toBeGreaterThan(-1);
-    expect(spacer).toBeLessThan(title);
-    expect(title).toBeLessThan(divider);
-    expect(divider).toBeLessThan(feeds);
-    expect(xhtml).toContain('flex: 1');
+  it('renders the feed list with names and counts', () => {
+    // Broadsheet doesn't uppercase feed names, so mixed-case names round-trip
+    // unmodified — pick a folder guaranteed to hash to it.
+    const broadsheet = folderForTemplate(TEMPLATES.indexOf('broadsheet'));
+    const svg = svgFor(broadsheet);
+    expect(svg).toContain('Ars Technica');
+    expect(svg).toContain('4');
+    expect(svg).toContain('The Verge');
+    expect(svg).toContain('2');
   });
 
-  it('renders the feed list with names, counts and 40% max-width', () => {
-    const { xhtml } = renderCover(sampleInput('Technology'));
-    expect(xhtml).toContain('max-width: 40%');
-    expect(xhtml).toContain('Ars Technica');
-    expect(xhtml).toMatch(/<span class="feed-count">4<\/span>/);
-    expect(xhtml).toContain('justify-content: space-between');
+  it('uses the stable hash-derived glyph', () => {
+    const svg = svgFor('Technology');
+    expect(svg).toContain(glyphFor('Technology'));
   });
 
-  it('applies the required text-shadow to text over the image', () => {
-    const { xhtml } = renderCover(sampleInput('Technology'));
-    expect(xhtml).toContain('text-shadow: 0 1px 6px rgba(0,0,0,0.65), 0 0 14px rgba(0,0,0,0.35)');
+  it('embeds fonts as base64 data URIs, no external CDN', () => {
+    const svg = svgFor('Technology');
+    expect(svg).toContain('@font-face');
+    expect(svg).toMatch(/url\('data:font\/woff2;base64,[^']+'\)/);
+    expect(svg).not.toMatch(/https?:\/\/fonts\.g/i);
+    expect(svg).not.toContain('cdn');
   });
 
-  it('uses the stable glyph for the folder', () => {
-    const { xhtml, glyph } = renderCover(sampleInput('Technology'));
-    expect(glyph).toBe(glyphFor('Technology'));
-    expect(xhtml).toContain(glyph);
-  });
-
-  it('falls back to crosshatch when no image is provided', () => {
-    const { xhtml } = renderCover(sampleInput('Technology', false));
-    expect(xhtml).toContain('class="crosshatch"');
-    expect(xhtml).not.toContain('class="bg"');
-  });
-
-  it('The Review adds the double border decoration and ornament', () => {
+  it('The Review still gets its double-border decoration', () => {
     const review = folderForTemplate(TEMPLATES.indexOf('the-review'));
-    const { xhtml } = renderCover(sampleInput(review));
-    expect(xhtml).toContain('border-outer');
-    expect(xhtml).toContain('border-inner');
-    expect(xhtml).toContain('· · ·');
-    expect(xhtml).toContain('inset: 6px');
-    expect(xhtml).toContain('inset: 10px');
+    const svg = svgFor(review);
+    const borderRects = svg.match(/<rect[^>]+fill="none"[^>]*\/>/g) ?? [];
+    expect(borderRects.length).toBe(2);
   });
 
-  it('The Signal divider is [rule][date][rule]', () => {
-    const signal = folderForTemplate(TEMPLATES.indexOf('the-signal'));
-    const { xhtml } = renderCover(sampleInput(signal));
-    expect(xhtml).toMatch(
-      /<div class="divider"><span class="rule"><\/span><span class="date">June 7, 2026<\/span><span class="rule"><\/span><\/div>/,
-    );
+  it('SVG canvas is the Kindle Paperwhite size (1072x1448)', () => {
+    const svg = svgFor('Technology');
+    expect(svg).toContain('width="1072"');
+    expect(svg).toContain('height="1448"');
+  });
+
+  it('theme changes text color', () => {
+    const dark = svgFor('Technology', 'dark');
+    const light = svgFor('Technology', 'light');
+    expect(dark).toContain('fill="white"');
+    expect(light).toContain('fill="#1a1a1a"');
+  });
+});
+
+describe('buildCoverJpeg', () => {
+  it('produces a JPEG at exactly 1072x1448, with and without a background image', async () => {
+    const bg = await sharp({
+      create: { width: 800, height: 600, channels: 3, background: { r: 90, g: 140, b: 200 } },
+    })
+      .jpeg()
+      .toBuffer();
+
+    for (const backgroundRaw of [bg, undefined]) {
+      for (const theme of ['dark', 'light'] as const) {
+        const jpeg = await buildCoverJpeg(sampleInput('Technology'), backgroundRaw, FONTS, null, theme);
+        const meta = await sharp(jpeg).metadata();
+        expect(meta.format).toBe('jpeg');
+        expect(meta.width).toBe(1072);
+        expect(meta.height).toBe(1448);
+      }
+    }
+  });
+
+  it('stays visually grayscale even with a colorful background image', async () => {
+    const bg = await sharp({
+      create: { width: 800, height: 600, channels: 3, background: { r: 200, g: 40, b: 90 } },
+    })
+      .jpeg()
+      .toBuffer();
+
+    const jpeg = await buildCoverJpeg(sampleInput('Technology'), bg, FONTS, null, 'dark');
+    // Sample a strip away from any text/decoration (mid-left, above the gradient's
+    // dark band) to check the underlying photo treatment stayed grayscale.
+    const { data } = await sharp(jpeg)
+      .extract({ left: 20, top: 400, width: 40, height: 10 })
+      .raw()
+      .toBuffer({ resolveWithObject: true });
+    for (let i = 0; i < data.length / 3; i++) {
+      const p = i * 3;
+      expect(Math.abs(data[p] - data[p + 1])).toBeLessThanOrEqual(4);
+      expect(Math.abs(data[p + 1] - data[p + 2])).toBeLessThanOrEqual(4);
+    }
   });
 });

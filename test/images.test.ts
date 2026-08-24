@@ -11,13 +11,13 @@ async function makeColorImage(): Promise<Buffer> {
 }
 
 describe('processCoverImage', () => {
-  it('produces grayscale JPEG within 1200x900 bounds', async () => {
+  it('produces a grayscale JPEG cropped to exactly 1600x2400', async () => {
     const out = await processCoverImage(await makeColorImage(), {
       contrast: 1.1,
       brightness: 0.72,
     });
-    expect(out.width).toBeLessThanOrEqual(1200);
-    expect(out.height).toBeLessThanOrEqual(900);
+    expect(out.width).toBe(1600);
+    expect(out.height).toBe(2400);
 
     // Sample pixels: grayscale means R == G == B.
     const { data } = await sharp(out.jpeg).raw().toBuffer({ resolveWithObject: true });

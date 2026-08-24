@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import { DateTime } from 'luxon';
 import { escapeHtml } from '../util/html.js';
 import type { LoadedFont } from './fontLoader.js';
 import { templateFor, glyphFor, type TemplateId } from './hash.js';
@@ -217,7 +218,7 @@ function buildBottomZone(
   feeds: Array<{ name: string; count: number }>,
   weekday: string,
   folder: string,
-  dateLabel: string,
+  isoDate: string,
   theme: 'light' | 'dark',
 ): string[] {
   const tc = (dark: string, light: string) => (theme === 'dark' ? dark : light);
@@ -260,9 +261,13 @@ function buildBottomZone(
     );
   }
 
-  void dateLabel; // available for future use (e.g. theSignal date-in-divider)
-
   y -= Math.round(H * 0.01);
+
+  // Sizes for the weekday/date pair, needed below to size the folder→date
+  // gap correctly (the gap above a line must fit *that* line's height, not
+  // the smaller line already drawn below it).
+  const wdSize = vw(cfg.weekdaySize);
+  const dateSize = Math.round(wdSize * 0.6);
 
   // Folder subtitle
   const folderSize = vw(cfg.folderSize);
@@ -270,10 +275,18 @@ function buildBottomZone(
   els.push(
     `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${folderSize}" font-style="italic" fill="${folderFill}" text-anchor="${anchor}">${esc(folder)}</text>`,
   );
-  y -= Math.round(folderSize * 1.3);
+  y -= Math.round(dateSize * 1.3);
+
+  // Date — paired with the weekday headline, 60% of its font size.
+  const shortDate = DateTime.fromISO(isoDate).toFormat('MMM dd');
+  const dateText = cfg.weekdayUppercase ? shortDate.toUpperCase() : shortDate;
+  const dateFill = tc('rgba(255,255,255,0.72)', 'rgba(0,0,0,0.72)');
+  els.push(
+    `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${dateSize}" font-style="${cfg.weekdayItalic ? 'italic' : 'normal'}" fill="${dateFill}" text-anchor="${anchor}">${esc(dateText)}</text>`,
+  );
+  y -= Math.round(dateSize * 1.3);
 
   // Weekday headline
-  const wdSize = vw(cfg.weekdaySize);
   const wdText = cfg.weekdayUppercase ? weekday.toUpperCase() : weekday;
   const weekdayFill = tc('white', '#1a1a1a');
   els.push(
@@ -291,7 +304,7 @@ const IMAGE_ADJUST_LIGHT: Record<TemplateId, { contrast: number; brightness: num
   'the-signal': { contrast: 0.85, brightness: 1.5 },
 };
 
-function buildCoverSvg(
+export function buildCoverSvg(
   templateId: TemplateId,
   input: CoverInput & { glyph: string },
   fonts: LoadedFont[],
@@ -317,7 +330,7 @@ function buildCoverSvg(
     input.feeds,
     input.weekday,
     input.folder,
-    input.dateLabel,
+    input.isoDate,
     theme,
   );
 

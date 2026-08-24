@@ -46,7 +46,8 @@ export async function downloadImage(
 
 /**
  * Convert to grayscale (server-side, per spec — never CSS filters), apply
- * template-specific contrast/brightness, resize to fit max 1200×900, JPEG q70.
+ * template-specific contrast/brightness, crop-to-fill exactly 1600×2400
+ * (Kindle-cover source resolution), JPEG q85.
  */
 export async function processCoverImage(
   input: Buffer,
