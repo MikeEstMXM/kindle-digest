@@ -155,6 +155,38 @@ fly ssh console --app kindle-digest   # shell into the container
 fly deploy                            # redeploy after code changes
 ```
 
+### Deploying without a terminal
+
+`.github/workflows/deploy.yml` deploys from the browser: **Actions → Deploy to
+Fly → Run workflow**, choosing the branch to ship. It is `workflow_dispatch`
+only — nothing deploys as a side effect of a push, so a deploy is always a
+deliberate act.
+
+Two one-time setup steps, both browser-only:
+
+1. **Fly dashboard → `kindle-digest` → Tokens** → create a **deploy token**.
+   Scope it to this app; an account-wide token in CI can reach everything else
+   you own.
+2. **GitHub → repo Settings → Secrets and variables → Actions** → new repository
+   secret named `FLY_API_TOKEN`, pasting that token.
+
+Until the secret exists the workflow fails with an authentication error.
+
+### Checking what a build cost
+
+Every EPUB's diagnostics page (last page in the book) reports build time, images
+embedded, and **peak memory against the 512 MB VM**, with the
+`BUILD_CONCURRENCY` that produced it. To read it without waiting for Kindle
+delivery, use the **Download** button on the dashboard and open the file.
+
+The memory figure is measured *before* the EPUB is zipped, so it excludes final
+assembly — about 30 MB short of the whole-build peak on a large digest. The
+complete figure is stored in `run_log` and appears in failure-alert emails.
+
+If peak memory is uncomfortably close to 512 MB, lower the concurrency from the
+Fly dashboard (Secrets → `BUILD_CONCURRENCY=2`); it takes effect on restart, no
+redeploy needed.
+
 ---
 
 ## Known limitations

@@ -220,6 +220,23 @@ Concurrency is the knob, via `BUILD_CONCURRENCY` (default 4). At 320 articles:
 Diminishing returns past 8, and the ceiling is 512 MB — lower it if a folder
 grows much busier or real digests run heavier than the synthetic profile.
 
+### Reading real build cost (no terminal needed)
+
+Every EPUB's diagnostics page reports peak RSS against the 512 MB VM, the
+`BUILD_CONCURRENCY` behind it, build time and image count — so a real digest
+measures itself on real feeds with real distinct images, which no synthetic
+benchmark can. Grab a book from the dashboard's Download button and read the
+last page; the complete peak (including zip) is in `run_log` and rides along in
+failure-alert emails.
+
+The page's figure is taken before `buildEpubToFile`, so it excludes final
+assembly — ~30 MB short of the true peak at 320 articles. That is deliberate:
+diagnostics is generated before the zip exists. Do not "fix" it by moving the
+diagnostics build later; it is the last spine item and must be written first.
+
+Deploys run from GitHub Actions (**Actions → Deploy to Fly → Run workflow**),
+`workflow_dispatch` only. Needs a `FLY_API_TOKEN` repo secret — see README.
+
 ### Verifying against real data
 
 Every figure above is **synthetic**. `--db` alone does not fix that: it reads

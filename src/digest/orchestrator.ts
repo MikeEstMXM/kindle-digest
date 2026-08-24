@@ -20,6 +20,7 @@ import {
 } from '../epub/writer.js';
 import { buildDiagnosticsPage } from '../diagnostics/build.js';
 import { mapWithConcurrency, DEFAULT_BUILD_CONCURRENCY } from '../util/concurrency.js';
+import { PeakMemory } from '../util/peakMemory.js';
 import { feedCounts } from './grouping.js';
 import type { LoadedFont } from '../cover/fontLoader.js';
 import type { TemplateId } from '../cover/hash.js';
@@ -53,6 +54,16 @@ export interface BuildOptions {
   concurrency?: number;
 }
 
+/** What a build cost. Recorded in run_log; the pre-zip figure is also printed
+ *  on the EPUB's diagnostics page. */
+export interface BuildMetrics {
+  /** High-water RSS across the whole build, including final assembly. */
+  peakRssBytes: number;
+  /** Images embedded (cover, masthead, QR codes and article images). */
+  imageCount: number;
+  concurrency: number;
+}
+
 export interface BuiltDigest {
   folder: string;
   /** Absolute path to the built .epub on disk. */
@@ -61,6 +72,7 @@ export interface BuiltDigest {
   /** Attachment filename presented to the mail client. */
   filename: string;
   itemIds: string[];
+  metrics: BuildMetrics;
 }
 
 interface ResolvedArticle {
@@ -190,7 +202,12 @@ export async function buildFolderDigest(
     );
     // 'built' means an EPUB exists on disk — delivery.state is the authority
     // on whether it was actually mailed.
-    if (runId !== undefined) runLog?.finish(runId, 'built', Date.now() - startedAt);
+    if (runId !== undefined) {
+      runLog?.finish(runId, 'built', Date.now() - startedAt, undefined, {
+        ...built.metrics,
+        epubBytes: built.epubBytes,
+      });
+    }
     return built;
   } catch (err) {
     // Previously any throw here left the row stuck at 'running' forever with a
@@ -210,6 +227,16 @@ async function buildFolderDigestInner(
   runLog: RunLogRepo | undefined,
   runId: number | undefined,
 ): Promise<BuiltDigest> {
+  // Sampled rather than read once at the end: memory released before the build
+  // finishes still counted while it was held, and the high-water mark is what
+  // the VM's 512 MB limit actually tests.
+  const memory = new PeakMemory();
+  memory.start();
+
+  // Hoisted: the peak RSS figure is meaningless without the setting that
+  // produced it, so diagnostics reports them together.
+  const concurrency = opts.concurrency ?? DEFAULT_BUILD_CONCURRENCY;
+
   const dt = DateTime.fromISO(opts.isoDate, { zone: opts.timezone });
   const weekday = dt.toFormat('cccc');
   const dateLabel = dt.toFormat('LLLL d, yyyy');
@@ -229,6 +256,7 @@ async function buildFolderDigestInner(
   try {
     return await assembleDigest();
   } finally {
+    memory.stop();
     await rm(stagingDir, { recursive: true, force: true });
   }
 
@@ -268,99 +296,95 @@ async function buildFolderDigestInner(
     // Results land in a pre-sized array, so article order, filenames and spine
     // position are identical to the serial version regardless of which article
     // finishes first.
-    const perArticle = await mapWithConcurrency(
-      articles,
-      opts.concurrency ?? DEFAULT_BUILD_CONCURRENCY,
-      async (article, i) => {
-        const r = await resolveContent(article, opts.minChars, opts.fetchPage);
-        const idx = i + 1;
-        const articleImages: EpubBinary[] = [];
-        const artFilename = `art-${idx}.xhtml`;
-        const feedIdx = feedIndexMap.get(r.article.feedTitle)!;
-        const sectionFilename = `feed-${feedIdx}-index.xhtml`;
+    const perArticle = await mapWithConcurrency(articles, concurrency, async (article, i) => {
+      const r = await resolveContent(article, opts.minChars, opts.fetchPage);
+      const idx = i + 1;
+      const articleImages: EpubBinary[] = [];
+      const artFilename = `art-${idx}.xhtml`;
+      const feedIdx = feedIndexMap.get(r.article.feedTitle)!;
+      const sectionFilename = `feed-${feedIdx}-index.xhtml`;
 
-        // Compute prev/next within this feed section.
-        const sectionIndices = feedArticleIndices.get(feedIdx)!;
-        const posInSection = sectionIndices.indexOf(idx - 1);
-        const prevFilename =
-          posInSection > 0 ? `art-${sectionIndices[posInSection - 1] + 1}.xhtml` : null;
-        const nextFilename =
-          posInSection < sectionIndices.length - 1
-            ? `art-${sectionIndices[posInSection + 1] + 1}.xhtml`
-            : null;
+      // Compute prev/next within this feed section.
+      const sectionIndices = feedArticleIndices.get(feedIdx)!;
+      const posInSection = sectionIndices.indexOf(idx - 1);
+      const prevFilename =
+        posInSection > 0 ? `art-${sectionIndices[posInSection - 1] + 1}.xhtml` : null;
+      const nextFilename =
+        posInSection < sectionIndices.length - 1
+          ? `art-${sectionIndices[posInSection + 1] + 1}.xhtml`
+          : null;
 
-        const qrHref = `images/qr-${idx}.png`;
-        const qr = await generateQrPng(r.article.url, { size: 220 });
-        articleImages.push({ href: qrHref, path: await stage(qrHref, qr), mediaType: 'image/png' });
+      const qrHref = `images/qr-${idx}.png`;
+      const qr = await generateQrPng(r.article.url, { size: 220 });
+      articleImages.push({ href: qrHref, path: await stage(qrHref, qr), mediaType: 'image/png' });
 
-        // Download + embed inline article images; substitute or strip placeholders.
-        // Cap images per article; skip all images for gallery-type pages.
-        const wordCount = htmlToText(r.bodyXhtml).split(/\s+/).filter(Boolean).length;
-        const isGallery =
-          r.imageUrls.length > MAX_IMAGES_PER_ARTICLE &&
-          r.imageUrls.length * GALLERY_IMAGE_RATIO > wordCount;
-        const imageLimit = isGallery ? 0 : MAX_IMAGES_PER_ARTICLE;
+      // Download + embed inline article images; substitute or strip placeholders.
+      // Cap images per article; skip all images for gallery-type pages.
+      const wordCount = htmlToText(r.bodyXhtml).split(/\s+/).filter(Boolean).length;
+      const isGallery =
+        r.imageUrls.length > MAX_IMAGES_PER_ARTICLE &&
+        r.imageUrls.length * GALLERY_IMAGE_RATIO > wordCount;
+      const imageLimit = isGallery ? 0 : MAX_IMAGES_PER_ARTICLE;
 
-        let bodyXhtml = r.bodyXhtml;
-        for (let i = 0; i < r.imageUrls.length; i++) {
-          if (i >= imageLimit) {
-            // Strip placeholder — beyond cap or gallery page.
-            bodyXhtml = bodyXhtml.replace(
-              new RegExp(`<img[^>]*src="%%img-${i}%%"[^>]*\\/>`, 'g'),
-              '',
-            );
-            continue;
-          }
-          const imgHref = `images/art-${idx}-img-${i}.jpg`;
-          try {
-            const raw = await downloadImage(r.imageUrls[i], opts.fetchImage ?? fetch);
-            const processed = await processArticleImage(raw);
-            articleImages.push({
-              href: imgHref,
-              path: await stage(imgHref, processed.jpeg),
-              mediaType: 'image/jpeg',
-            });
-            bodyXhtml = bodyXhtml.replace(`%%img-${i}%%`, imgHref);
-          } catch {
-            bodyXhtml = bodyXhtml.replace(
-              new RegExp(`<img[^>]*src="%%img-${i}%%"[^>]*\\/>`, 'g'),
-              '',
-            );
-          }
+      let bodyXhtml = r.bodyXhtml;
+      for (let i = 0; i < r.imageUrls.length; i++) {
+        if (i >= imageLimit) {
+          // Strip placeholder — beyond cap or gallery page.
+          bodyXhtml = bodyXhtml.replace(
+            new RegExp(`<img[^>]*src="%%img-${i}%%"[^>]*\\/>`, 'g'),
+            '',
+          );
+          continue;
         }
+        const imgHref = `images/art-${idx}-img-${i}.jpg`;
+        try {
+          const raw = await downloadImage(r.imageUrls[i], opts.fetchImage ?? fetch);
+          const processed = await processArticleImage(raw);
+          articleImages.push({
+            href: imgHref,
+            path: await stage(imgHref, processed.jpeg),
+            mediaType: 'image/jpeg',
+          });
+          bodyXhtml = bodyXhtml.replace(`%%img-${i}%%`, imgHref);
+        } catch {
+          bodyXhtml = bodyXhtml.replace(
+            new RegExp(`<img[^>]*src="%%img-${i}%%"[^>]*\\/>`, 'g'),
+            '',
+          );
+        }
+      }
 
-        const pageXhtml = buildArticlePage({
-          title: r.article.title,
-          url: r.article.url,
-          feedTitle: r.article.feedTitle,
-          author: r.article.author,
-          dateLabel: r.article.publishedMs
-            ? DateTime.fromMillis(r.article.publishedMs)
-                .setZone(opts.timezone)
-                .toFormat('LLLL d, yyyy')
-            : undefined,
-          bodyXhtml,
-          qrHref,
-          navBar: { prevHref: prevFilename, nextHref: nextFilename, sectionHref: sectionFilename },
-        });
-        const epubArticle: EpubArticle = {
-          id: `art-${idx}`,
-          filename: artFilename,
-          title: r.article.title,
-          path: await stage(artFilename, Buffer.from(pageXhtml, 'utf8')),
-        };
-        // The rendered page is on disk now, and neither the extracted body nor the
-        // original feed HTML is read again — everything still needed downstream
-        // (titles, feed names, diagnostics fields) is small. Releasing both is what
-        // keeps the heap from growing with article count. Note this mutates the
-        // caller's NormalizedArticle; safe because a rebuild always re-queries the
-        // DB, and a retry from 'built' skips the build entirely.
-        r.bodyXhtml = '';
-        r.article.contentHtml = '';
+      const pageXhtml = buildArticlePage({
+        title: r.article.title,
+        url: r.article.url,
+        feedTitle: r.article.feedTitle,
+        author: r.article.author,
+        dateLabel: r.article.publishedMs
+          ? DateTime.fromMillis(r.article.publishedMs)
+              .setZone(opts.timezone)
+              .toFormat('LLLL d, yyyy')
+          : undefined,
+        bodyXhtml,
+        qrHref,
+        navBar: { prevHref: prevFilename, nextHref: nextFilename, sectionHref: sectionFilename },
+      });
+      const epubArticle: EpubArticle = {
+        id: `art-${idx}`,
+        filename: artFilename,
+        title: r.article.title,
+        path: await stage(artFilename, Buffer.from(pageXhtml, 'utf8')),
+      };
+      // The rendered page is on disk now, and neither the extracted body nor the
+      // original feed HTML is read again — everything still needed downstream
+      // (titles, feed names, diagnostics fields) is small. Releasing both is what
+      // keeps the heap from growing with article count. Note this mutates the
+      // caller's NormalizedArticle; safe because a rebuild always re-queries the
+      // DB, and a retry from 'built' skips the build entirely.
+      r.bodyXhtml = '';
+      r.article.contentHtml = '';
 
-        return { r, epubArticle, articleImages };
-      },
-    );
+      return { r, epubArticle, articleImages };
+    });
 
     // Flattened in input order, and run_log rows written sequentially, so
     // neither the EPUB nor the diagnostics depend on completion order.
@@ -456,6 +480,12 @@ async function buildFolderDigestInner(
       included: articles.length,
       excluded: totalFetched - articles.length,
       totalGenerationMs,
+      // Read before the EPUB is zipped, so this is the peak up to and including
+      // rendering — final assembly is not in it. buildDiagnosticsPage labels it
+      // as such rather than presenting it as the whole-build peak.
+      peakRssBytes: memory.peakRss,
+      concurrency,
+      imageCount: images.length,
       articles: resolved.map((r) => ({
         title: r.article.title,
         contentSource: r.source,
@@ -488,12 +518,16 @@ async function buildFolderDigestInner(
       epubPath,
     );
 
+    // Read after the zip so this covers the whole build, unlike the figure on
+    // the diagnostics page.
+    trace('after zip');
     return {
       folder,
       epubPath,
       epubBytes,
       filename,
       itemIds: articles.map((a) => a.itemId),
+      metrics: { peakRssBytes: memory.peakRss, imageCount: images.length, concurrency },
     };
   }
 }

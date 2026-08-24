@@ -23,11 +23,20 @@ export async function sendFailureAlert(ctx: AppContext, row: DeliveryRow): Promi
 
   const recentRuns = ctx.runLog
     .recent(5)
-    .map(
-      (r) =>
+    .map((r) => {
+      // Peak memory is here because OOM is a plausible cause of a failed run,
+      // and this alert is the one place the failure is actually read.
+      const mem =
+        r.peak_rss_bytes === null
+          ? ''
+          : ` ${(r.peak_rss_bytes / 1024 / 1024).toFixed(0)}MB peak` +
+            (r.concurrency === null ? '' : ` @c${r.concurrency}`);
+      return (
         `  ${r.digest_date}  ${r.folder.padEnd(16)} ${r.status.padEnd(8)} ` +
-        `${String(r.included).padStart(4)} articles  ${r.error ? `\n      ${r.error.split('\n')[0]}` : ''}`,
-    )
+        `${String(r.included).padStart(4)} articles${mem}` +
+        `${r.error ? `\n      ${r.error.split('\n')[0]}` : ''}`
+      );
+    })
     .join('\n');
 
   const body = [

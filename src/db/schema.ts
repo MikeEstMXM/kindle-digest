@@ -89,7 +89,12 @@ export function migrate(db: DB): void {
       excluded      INTEGER NOT NULL DEFAULT 0,
       duration_ms   INTEGER,
       status        TEXT NOT NULL DEFAULT 'running', -- running|built|error
-      error         TEXT
+      error         TEXT,
+      -- Build cost; NULL for runs recorded before this was measured.
+      peak_rss_bytes INTEGER,
+      epub_bytes     INTEGER,
+      image_count    INTEGER,
+      concurrency    INTEGER
     );
 
     -- Per-article record within a run (drives the diagnostics page).
@@ -142,5 +147,25 @@ export function migrate(db: DB): void {
   }
   if (!cols.includes('cover_theme')) {
     db.exec("ALTER TABLE folder_settings ADD COLUMN cover_theme TEXT NOT NULL DEFAULT 'dark'");
+  }
+
+  // Build cost, recorded per run so real digests can be compared over time and
+  // against the synthetic benchmark. Nullable: rows written before this
+  // migration have no measurement, and absent must stay distinguishable from
+  // zero.
+  const runCols = (db.prepare('PRAGMA table_info(run_log)').all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  if (!runCols.includes('peak_rss_bytes')) {
+    db.exec('ALTER TABLE run_log ADD COLUMN peak_rss_bytes INTEGER');
+  }
+  if (!runCols.includes('epub_bytes')) {
+    db.exec('ALTER TABLE run_log ADD COLUMN epub_bytes INTEGER');
+  }
+  if (!runCols.includes('image_count')) {
+    db.exec('ALTER TABLE run_log ADD COLUMN image_count INTEGER');
+  }
+  if (!runCols.includes('concurrency')) {
+    db.exec('ALTER TABLE run_log ADD COLUMN concurrency INTEGER');
   }
 }

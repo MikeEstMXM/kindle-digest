@@ -14,7 +14,21 @@ export interface DiagnosticsData {
   excluded: number;
   totalGenerationMs: number;
   articles: DiagnosticsArticle[];
+  /**
+   * Peak RSS in bytes, sampled up to the moment this page is generated. The
+   * EPUB has not been zipped yet, so final assembly is not included — roughly
+   * 30 MB short of the whole-build peak on a large digest. Optional so older
+   * callers and tests keep working.
+   */
+  peakRssBytes?: number;
+  /** BUILD_CONCURRENCY in force. The memory figure means little without it. */
+  concurrency?: number;
+  /** Images embedded: cover, masthead, QR codes and article images. */
+  imageCount?: number;
 }
+
+/** Fly VM allocation this app runs on; peak RSS is only interesting against it. */
+const VM_MEMORY_BYTES = 512 * 1024 * 1024;
 
 const SOURCE_LABEL: Record<string, string> = {
   feed: 'RSS feed',
@@ -57,6 +71,22 @@ export function buildDiagnosticsPage(data: DiagnosticsData): string {
 
   const seconds = (data.totalGenerationMs / 1000).toFixed(1);
 
+  // Only rendered when measured, so a caller that omits it gets the old page.
+  const buildCost =
+    data.peakRssBytes === undefined
+      ? ''
+      : `\n    <dt>Peak memory</dt><dd>${(data.peakRssBytes / 1024 / 1024).toFixed(0)} MB ` +
+        `of ${VM_MEMORY_BYTES / 1024 / 1024} MB ` +
+        `(${Math.round((data.peakRssBytes / VM_MEMORY_BYTES) * 100)}%), ` +
+        `measured before final assembly` +
+        (data.concurrency === undefined ? '' : `, at concurrency ${data.concurrency}`) +
+        `</dd>`;
+
+  const imageLine =
+    data.imageCount === undefined
+      ? ''
+      : `\n    <dt>Images embedded</dt><dd>${data.imageCount}</dd>`;
+
   return `<?xml version="1.0" encoding="utf-8"?>
 <!DOCTYPE html>
 <html xmlns="http://www.w3.org/1999/xhtml" lang="en">
@@ -71,7 +101,7 @@ export function buildDiagnosticsPage(data: DiagnosticsData): string {
     <dt>Digest generated at</dt><dd>${escapeHtml(data.generatedAt)}</dd>
     <dt>Total articles fetched</dt><dd>${data.totalFetched}</dd>
     <dt>Included / excluded</dt><dd>${data.included} included, ${data.excluded} excluded</dd>
-    <dt>Total generation time</dt><dd>${seconds}s</dd>
+    <dt>Total generation time</dt><dd>${seconds}s</dd>${imageLine}${buildCost}
   </dl>
 
   <h2>Per-article content source</h2>

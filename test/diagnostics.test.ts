@@ -46,3 +46,41 @@ describe('buildDiagnosticsPage', () => {
     expect(clean).toContain('No extraction failures.');
   });
 });
+
+describe('build cost reporting', () => {
+  const base = {
+    folder: 'News',
+    generatedAt: '2026-08-23 06:30:00 EDT',
+    totalFetched: 200,
+    included: 157,
+    excluded: 43,
+    totalGenerationMs: 15_800,
+    articles: [],
+  };
+
+  it('reports peak memory against the VM limit, with the concurrency behind it', () => {
+    const html = buildDiagnosticsPage({
+      ...base,
+      peakRssBytes: 345 * 1024 * 1024,
+      concurrency: 4,
+      imageCount: 172,
+    });
+    expect(html).toContain('345 MB of 512 MB');
+    expect(html).toContain('67%');
+    expect(html).toContain('concurrency 4');
+    expect(html).toContain('<dt>Images embedded</dt><dd>172</dd>');
+  });
+
+  it('says the figure excludes final assembly, so it is not read as the whole-build peak', () => {
+    const html = buildDiagnosticsPage({ ...base, peakRssBytes: 1024 * 1024 });
+    expect(html).toContain('before final assembly');
+  });
+
+  it('omits the build-cost rows entirely when nothing was measured', () => {
+    const html = buildDiagnosticsPage(base);
+    expect(html).not.toContain('Peak memory');
+    expect(html).not.toContain('Images embedded');
+    // The rest of the page is unaffected.
+    expect(html).toContain('157 included, 43 excluded');
+  });
+});

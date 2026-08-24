@@ -38,6 +38,8 @@ import { fileURLToPath } from 'node:url';
 import sharp from 'sharp';
 import { configureSharp } from '../src/content/sharpConfig.js';
 import { DEFAULT_BUILD_CONCURRENCY } from '../src/util/concurrency.js';
+// Shared with the production build so both measure identically.
+import { PeakMemory } from '../src/util/peakMemory.js';
 import { buildFolderDigest } from '../src/digest/orchestrator.js';
 import { loadFontBuffers } from '../src/cover/fontLoader.js';
 import { openDb } from '../src/db/schema.js';
@@ -51,26 +53,6 @@ const FONTS = join(__dirname, '..', 'assets', 'fonts');
 function arg(name: string, fallback?: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
   return i >= 0 ? process.argv[i + 1] : fallback;
-}
-
-/** Peak RSS sampler — the number that actually decides whether Fly OOM-kills us. */
-class PeakMemory {
-  private peak = 0;
-  peakSnapshot: NodeJS.MemoryUsage = process.memoryUsage();
-  private timer?: NodeJS.Timeout;
-  start(): void {
-    this.timer = setInterval(() => {
-      const m = process.memoryUsage();
-      if (m.rss > this.peak) {
-        this.peak = m.rss;
-        this.peakSnapshot = m;
-      }
-    }, 50);
-  }
-  stop(): number {
-    if (this.timer) clearInterval(this.timer);
-    return this.peak;
-  }
 }
 
 const mb = (bytes: number): string => `${(bytes / 1024 / 1024).toFixed(0)} MB`;

@@ -143,6 +143,14 @@ export interface ArticleLogEntry {
   extractMs?: number;
 }
 
+/** Build cost for one run. All optional: an errored build may have measured none. */
+export interface RunMetrics {
+  peakRssBytes?: number;
+  epubBytes?: number;
+  imageCount?: number;
+  concurrency?: number;
+}
+
 export class RunLogRepo {
   constructor(private db: DB) {}
 
@@ -180,12 +188,31 @@ export class RunLogRepo {
    * accepted. (This used to be hardcoded to 'sent' at the end of the build,
    * which made a failed send indistinguishable from a delivered digest.)
    */
-  finish(runId: number, status: 'built' | 'error', durationMs: number, error?: string): void {
+  finish(
+    runId: number,
+    status: 'built' | 'error',
+    durationMs: number,
+    error?: string,
+    metrics?: RunMetrics,
+  ): void {
     this.db
       .prepare(
-        `UPDATE run_log SET finished_at = ?, duration_ms = ?, status = ?, error = ? WHERE id = ?`,
+        `UPDATE run_log
+            SET finished_at = ?, duration_ms = ?, status = ?, error = ?,
+                peak_rss_bytes = ?, epub_bytes = ?, image_count = ?, concurrency = ?
+          WHERE id = ?`,
       )
-      .run(Date.now(), durationMs, status, error ?? null, runId);
+      .run(
+        Date.now(),
+        durationMs,
+        status,
+        error ?? null,
+        metrics?.peakRssBytes ?? null,
+        metrics?.epubBytes ?? null,
+        metrics?.imageCount ?? null,
+        metrics?.concurrency ?? null,
+        runId,
+      );
   }
 
   articles(runId: number): ArticleLogEntry[] {
@@ -206,7 +233,8 @@ export class RunLogRepo {
   recent(limit = 10): RunSummary[] {
     return this.db
       .prepare(
-        `SELECT id, digest_date, folder, status, included, duration_ms, error, started_at
+        `SELECT id, digest_date, folder, status, included, duration_ms, error, started_at,
+                peak_rss_bytes, concurrency
          FROM run_log ORDER BY id DESC LIMIT ?`,
       )
       .all(limit) as RunSummary[];
@@ -222,6 +250,9 @@ export interface RunSummary {
   duration_ms: number | null;
   error: string | null;
   started_at: number;
+  /** NULL for runs recorded before build cost was measured. */
+  peak_rss_bytes: number | null;
+  concurrency: number | null;
 }
 
 // ─── Delivery outbox ─────────────────────────────────────────────────────────
@@ -279,7 +310,9 @@ export class DeliveryRepo {
   }
 
   get(id: number): DeliveryRow | undefined {
-    return this.db.prepare('SELECT * FROM delivery WHERE id = ?').get(id) as DeliveryRow | undefined;
+    return this.db.prepare('SELECT * FROM delivery WHERE id = ?').get(id) as
+      | DeliveryRow
+      | undefined;
   }
 
   find(digestDate: string, folder: string): DeliveryRow | undefined {

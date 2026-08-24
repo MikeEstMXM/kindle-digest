@@ -1,0 +1,41 @@
+name: Deploy to Fly
+
+# Manual only. A deploy ships straight to the live Kindle pipeline, so it never
+# happens as a side effect of a push — someone has to choose it.
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Branch, tag or SHA to deploy'
+        required: true
+        default: main
+
+# One deploy at a time; a second click queues rather than racing the first.
+concurrency:
+  group: fly-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: flyctl deploy
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - uses: superfly/flyctl-actions/setup-flyctl@master
+
+      # --remote-only builds on Fly's builder using the repo's Dockerfile and
+      # fly.toml, so the runner needs no Docker cache and the image matches
+      # exactly what a local `fly deploy` would produce.
+      - name: Deploy
+        run: flyctl deploy --remote-only --app kindle-digest
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
+
+      - name: Show status
+        if: always()
+        run: flyctl status --app kindle-digest
+        env:
+          FLY_API_TOKEN: ${{ secrets.FLY_API_TOKEN }}
