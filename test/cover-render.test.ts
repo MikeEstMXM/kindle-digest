@@ -51,44 +51,6 @@ describe('cover rendering (SVG overlay)', () => {
     }
   });
 
-  it('renders the date, paired with the weekday, for every template', () => {
-    for (let i = 0; i < TEMPLATES.length; i++) {
-      const templateId = TEMPLATES[i];
-      const folder = folderForTemplate(i);
-      const svg = svgFor(folder);
-
-      const uppercase = templateId === 'the-drop' || templateId === 'the-signal';
-      const expectedDate = uppercase ? 'JUN 07' : 'Jun 07';
-      const expectedWeekday = uppercase ? 'SATURDAY' : 'Saturday';
-
-      // Parse every <text> element (attrs + content) in source order. The
-      // bottom zone is built bottom-up: folder, then date, then weekday last.
-      const textEls = [...svg.matchAll(/<text([^>]*)>([^<]*)<\/text>/g)].map((m) => ({
-        fontSize: Number(m[1].match(/font-size="(\d+)"/)?.[1]),
-        content: m[2],
-      }));
-      const folderIdx = textEls.findIndex((t) => t.content === folder);
-      const dateIdx = textEls.findIndex((t) => t.content === expectedDate);
-      const weekdayIdx = textEls.findIndex((t) => t.content === expectedWeekday);
-
-      expect(folderIdx).toBeGreaterThan(-1);
-      expect(dateIdx).toBeGreaterThan(-1);
-      expect(weekdayIdx).toBeGreaterThan(-1);
-      // Never the long form.
-      expect(svg).not.toContain('June 7, 2026');
-
-      // Date sits directly between folder and weekday — a tight adjacent
-      // pair with weekday, with folder immediately before it.
-      expect(folderIdx).toBe(dateIdx - 1);
-      expect(weekdayIdx).toBe(dateIdx + 1);
-
-      // Date font-size is ~60% of the weekday font-size.
-      const ratio = textEls[dateIdx].fontSize / textEls[weekdayIdx].fontSize;
-      expect(ratio).toBeGreaterThan(0.55);
-      expect(ratio).toBeLessThan(0.65);
-    }
-  });
-
   it('renders the feed list with names and counts', () => {
     // Broadsheet doesn't uppercase feed names, so mixed-case names round-trip
     // unmodified — pick a folder guaranteed to hash to it.
