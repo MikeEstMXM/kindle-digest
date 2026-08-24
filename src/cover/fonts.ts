@@ -16,7 +16,7 @@ export interface FontFace {
 }
 
 export const FONT_FACES: FontFace[] = [
-  // Broadsheet — Playfair Display 900 (normal + italic)
+  // Broadsheet — Playfair Display 900 (title) + 400 / 400 italic (date, feed list)
   {
     family: 'Playfair Display',
     weight: 900,
@@ -27,11 +27,19 @@ export const FONT_FACES: FontFace[] = [
   },
   {
     family: 'Playfair Display',
-    weight: 900,
-    style: 'italic',
-    file: 'PlayfairDisplay-900italic.woff2',
+    weight: 400,
+    style: 'normal',
+    file: 'PlayfairDisplay-400.woff2',
     gwfhFamily: 'playfair-display',
-    gwfhVariant: '900italic',
+    gwfhVariant: 'regular',
+  },
+  {
+    family: 'Playfair Display',
+    weight: 400,
+    style: 'italic',
+    file: 'PlayfairDisplay-400italic.woff2',
+    gwfhFamily: 'playfair-display',
+    gwfhVariant: 'italic',
   },
   // The Drop — Bebas Neue 400
   {
@@ -59,22 +67,30 @@ export const FONT_FACES: FontFace[] = [
     gwfhFamily: 'eb-garamond',
     gwfhVariant: '600',
   },
-  // The Signal — Oswald 600 + 700
+  // The Signal — Bricolage Grotesque 400 / 500 / 800 (replaces Oswald)
   {
-    family: 'Oswald',
-    weight: 600,
+    family: 'Bricolage Grotesque',
+    weight: 400,
     style: 'normal',
-    file: 'Oswald-600.woff2',
-    gwfhFamily: 'oswald',
-    gwfhVariant: '600',
+    file: 'BricolageGrotesque-400.woff2',
+    gwfhFamily: 'bricolage-grotesque',
+    gwfhVariant: 'regular',
   },
   {
-    family: 'Oswald',
-    weight: 700,
+    family: 'Bricolage Grotesque',
+    weight: 500,
     style: 'normal',
-    file: 'Oswald-700.woff2',
-    gwfhFamily: 'oswald',
-    gwfhVariant: '700',
+    file: 'BricolageGrotesque-500.woff2',
+    gwfhFamily: 'bricolage-grotesque',
+    gwfhVariant: '500',
+  },
+  {
+    family: 'Bricolage Grotesque',
+    weight: 800,
+    style: 'normal',
+    file: 'BricolageGrotesque-800.woff2',
+    gwfhFamily: 'bricolage-grotesque',
+    gwfhVariant: '800',
   },
 ];
 
@@ -98,5 +114,5 @@ export const TEMPLATE_FONTS: Record<string, string> = {
   broadsheet: 'Playfair Display',
   'the-drop': 'Bebas Neue',
   'the-review': 'EB Garamond',
-  'the-signal': 'Oswald',
+  'the-signal': 'Bricolage Grotesque',
 };

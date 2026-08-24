@@ -19,111 +19,135 @@ function vh(pct: number): number {
   return Math.round((H * pct) / 100);
 }
 
-interface TemplateCfg {
-  gradient: Array<[number, string]>;
-  headerBg: string | null;
-  weekdaySize: number; // vw%
-  weekdayWeight: string;
-  weekdayItalic: boolean;
-  weekdayUppercase: boolean;
-  weekdayLetterSpacing: string;
-  folderSize: number; // vw%
-  feedSize: number; // vw%
-  feedUppercase: boolean;
-  align: 'left' | 'center';
+// Title block fit-to-width budget, shared by all four templates: full width minus
+// the 64px side margin on each side.
+const TITLE_BUDGET = W - 2 * vw(6);
+
+interface FeedCfg {
+  size: number;
+  weight?: string;
+  uppercase: boolean;
+  lineHeight: number;
   bottomPad: number; // vh%
+  align: 'left' | 'center';
   sidePad: number; // vw%
 }
 
-const CFGS: Record<TemplateId, TemplateCfg> = {
-  broadsheet: {
-    gradient: [
-      [0, 'rgba(0,0,0,0.55)'],
-      [0.3, 'rgba(0,0,0,0)'],
-      [0.65, 'rgba(0,0,0,0.55)'],
-      [1, 'rgba(0,0,0,0.92)'],
-    ],
-    headerBg: '#000000',
-    weekdaySize: 18,       // vw% — large serif, distinctive weight
-    weekdayWeight: '900',
-    weekdayItalic: false,
-    weekdayUppercase: false,
-    weekdayLetterSpacing: '-0.04em',
-    folderSize: 5.5,       // vw% — large enough to read on thumbnail
-    feedSize: 2.5,         // vw%
-    feedUppercase: false,
-    align: 'left',
-    bottomPad: 5,          // vh%
-    sidePad: 6,            // vw%
-  },
-  'the-drop': {
-    gradient: [
-      [0, 'rgba(0,0,0,0.65)'],
-      [0.3, 'rgba(0,0,0,0)'],
-      [0.65, 'rgba(0,0,0,0.60)'],
-      [1, 'rgba(0,0,0,0.96)'],
-    ],
-    headerBg: null,
-    weekdaySize: 24,       // vw% — massive condensed headline dominates the cover
-    weekdayWeight: '400',
-    weekdayItalic: false,
-    weekdayUppercase: true,
-    weekdayLetterSpacing: '0.03em',
-    folderSize: 5.0,       // vw%
-    feedSize: 2.0,         // vw%
-    feedUppercase: true,
-    align: 'left',
-    bottomPad: 7,          // vh% — more breathing room at bottom
-    sidePad: 6,            // vw%
-  },
-  'the-review': {
-    gradient: [
-      [0, 'rgba(0,0,0,0.62)'],
-      [0.35, 'rgba(0,0,0,0)'],
-      [0.65, 'rgba(0,0,0,0.55)'],
-      [1, 'rgba(0,0,0,0.94)'],
-    ],
-    headerBg: null,
-    weekdaySize: 17,       // vw% — italic serif, legible at full size and thumbnail
-    weekdayWeight: '400',
-    weekdayItalic: true,
-    weekdayUppercase: false,
-    weekdayLetterSpacing: '-0.02em',
-    folderSize: 6,         // vw% — noticeably larger; center-aligned makes it feel refined
-    feedSize: 2.5,         // vw%
-    feedUppercase: false,
-    align: 'center',
-    bottomPad: 7,          // vh% — elegant spacing
-    sidePad: 7,            // vw%
-  },
-  'the-signal': {
-    gradient: [
-      [0, 'rgba(0,0,0,0)'],
-      [0.5, 'rgba(0,0,0,0)'],
-      [0.65, 'rgba(0,0,0,0.55)'],
-      [1, 'rgba(0,0,0,0.95)'],
-    ],
-    headerBg: '#000000',
-    weekdaySize: 20,       // vw% — condensed all-caps, slightly smaller than the-drop
-    weekdayWeight: '700',
-    weekdayItalic: false,
-    weekdayUppercase: true,
-    weekdayLetterSpacing: '0.01em',
-    folderSize: 5.0,       // vw%
-    feedSize: 2.2,         // vw%
-    feedUppercase: true,
-    align: 'left',
-    bottomPad: 5,          // vh%
-    sidePad: 6,            // vw%
-  },
+const FEED_CFGS: Record<TemplateId, FeedCfg> = {
+  broadsheet: { size: 27, weight: '400', uppercase: false, lineHeight: 42, bottomPad: 5, align: 'left', sidePad: 6 },
+  'the-drop': { size: 21, uppercase: true, lineHeight: 33, bottomPad: 7, align: 'left', sidePad: 6 },
+  'the-review': { size: 27, uppercase: false, lineHeight: 42, bottomPad: 7, align: 'center', sidePad: 7 },
+  'the-signal': { size: 23, weight: '400', uppercase: true, lineHeight: 37, bottomPad: 5, align: 'left', sidePad: 6 },
+};
+
+const GRADIENTS: Record<TemplateId, Array<[number, string]>> = {
+  broadsheet: [
+    [0, 'rgba(0,0,0,0.55)'],
+    [0.24, 'rgba(0,0,0,0)'],
+    [0.76, 'rgba(0,0,0,0)'],
+    [0.84, 'rgba(0,0,0,0.75)'],
+    [1, 'rgba(0,0,0,0.96)'],
+  ],
+  'the-drop': [
+    [0, 'rgba(0,0,0,0.65)'],
+    [0.24, 'rgba(0,0,0,0)'],
+    [0.8, 'rgba(0,0,0,0)'],
+    [0.86, 'rgba(0,0,0,0.78)'],
+    [1, 'rgba(0,0,0,0.97)'],
+  ],
+  'the-review': [
+    [0, 'rgba(0,0,0,0.62)'],
+    [0.28, 'rgba(0,0,0,0)'],
+    [0.72, 'rgba(0,0,0,0)'],
+    [0.8, 'rgba(0,0,0,0.75)'],
+    [1, 'rgba(0,0,0,0.96)'],
+  ],
+  'the-signal': [
+    [0, 'rgba(0,0,0,0)'],
+    [0.76, 'rgba(0,0,0,0)'],
+    [0.84, 'rgba(0,0,0,0.75)'],
+    [1, 'rgba(0,0,0,0.96)'],
+  ],
 };
 
 const FONT_FAMILIES: Record<TemplateId, string> = {
   broadsheet: "'Playfair Display', 'Liberation Serif', serif",
   'the-drop': "'Bebas Neue','Oswald',Impact,'Arial Narrow',sans-serif",
   'the-review': "'EB Garamond', 'Liberation Serif', serif",
-  'the-signal': "'Oswald', 'Liberation Sans', sans-serif",
+  'the-signal': "'Bricolage Grotesque', 'Liberation Sans', sans-serif",
 };
+
+// Average glyph-advance ratio (advance width / font size) per template face,
+// calibrated against the sample strings in the design prototype ("World News",
+// "Culture", "Longreads", "Tech & Startups"). sharp/librsvg has no text
+// measurement API, so this is an estimate, not exact metrics — err on the
+// side of shrinking a title rather than letting it overflow.
+const TITLE_WIDTH_RATIO: Record<TemplateId, number> = {
+  broadsheet: 0.56,
+  'the-drop': 0.72,
+  'the-review': 0.48,
+  'the-signal': 0.62,
+};
+
+function estimateTextWidth(text: string, size: number, ratio: number, letterSpacingEm: number): number {
+  const n = text.length;
+  return n * size * ratio + Math.max(0, n - 1) * letterSpacingEm * size;
+}
+
+/** Shrink (never wrap) until the text fits the shared title budget. */
+function fitShrinkOnly(text: string, maxSize: number, ratio: number, letterSpacingEm: number): number {
+  let size = maxSize;
+  while (size > 16 && estimateTextWidth(text, size, ratio, letterSpacingEm) > TITLE_BUDGET) {
+    size -= 2;
+  }
+  return size;
+}
+
+/** Split on the last space that keeps line 1 under the width budget; never mid-word. */
+function splitAtSpace(text: string, size: number, ratio: number, letterSpacingEm: number): [string, string] {
+  const words = text.split(' ');
+  if (words.length < 2) return [text, ''];
+  let splitIdx = 1;
+  for (let i = 1; i < words.length; i++) {
+    const candidate = words.slice(0, i).join(' ');
+    if (estimateTextWidth(candidate, size, ratio, letterSpacingEm) <= TITLE_BUDGET) splitIdx = i;
+    else break;
+  }
+  return [words.slice(0, splitIdx).join(' '), words.slice(splitIdx).join(' ')];
+}
+
+interface SignalFit {
+  lines: string[];
+  size: number;
+}
+
+/**
+ * The Signal's title sizing: shrink from `maxSize` down to ~75% of it looking
+ * for a single-line fit; if it's still too wide there, wrap to two lines at
+ * that size and keep shrinking both lines together if needed. Caps at two lines.
+ */
+function fitSignalTitle(text: string, maxSize: number, ratio: number, letterSpacingEm: number): SignalFit {
+  const floor = Math.round(maxSize * 0.75);
+  let size = maxSize;
+  while (size > floor && estimateTextWidth(text, size, ratio, letterSpacingEm) > TITLE_BUDGET) {
+    size -= 2;
+  }
+  if (estimateTextWidth(text, size, ratio, letterSpacingEm) <= TITLE_BUDGET) {
+    return { lines: [text], size };
+  }
+
+  size = floor;
+  let [line1, line2] = splitAtSpace(text, size, ratio, letterSpacingEm);
+  while (
+    size > 16 &&
+    (estimateTextWidth(line1, size, ratio, letterSpacingEm) > TITLE_BUDGET ||
+      estimateTextWidth(line2, size, ratio, letterSpacingEm) > TITLE_BUDGET)
+  ) {
+    size -= 2;
+    [line1, line2] = splitAtSpace(text, size, ratio, letterSpacingEm);
+  }
+  return { lines: line2 ? [line1, line2] : [line1], size };
+}
 
 function buildFontFaceCss(templateId: TemplateId, fonts: LoadedFont[]): string {
   const neededFamily = TEMPLATE_FONTS[templateId];
@@ -201,7 +225,7 @@ function buildHeaderElements(
       const ty = Math.round(hh * 0.66);
       const textFill = tc('white', '#1a1a1a');
       els.push(
-        `<text x="${sp}" y="${ty}" font-family="${fontFamily}" font-size="${vw(1.8)}" font-weight="600" fill="${textFill}" letter-spacing="1px">DAILY DIGEST</text>`,
+        `<text x="${sp}" y="${ty}" font-family="${fontFamily}" font-size="18" font-weight="800" fill="${textFill}" letter-spacing="2px">DAILY DIGEST</text>`,
         `<text x="${W - sp}" y="${ty}" font-family="${fontFamily}" font-size="${vw(3.5)}" fill="${textFill}" text-anchor="end">${esc(glyph)}</text>`,
       );
       break;
@@ -210,77 +234,138 @@ function buildHeaderElements(
   return els;
 }
 
-function buildBottomZone(
-  _templateId: TemplateId,
-  cfg: TemplateCfg,
+/** 1a — broadsheet: masthead position, title/date stacked under the triple rule. */
+function buildBroadsheetTitle(input: CoverInput, theme: 'light' | 'dark'): string[] {
+  const tc = (dark: string, light: string) => (theme === 'dark' ? dark : light);
+  const fontFamily = FONT_FAMILIES.broadsheet;
+  const x = vw(6);
+  const size = fitShrinkOnly(input.folder, 140, TITLE_WIDTH_RATIO.broadsheet, -0.035);
+  const titleFill = tc('white', '#1a1a1a');
+  const dateFill = tc('rgba(255,255,255,0.92)', 'rgba(0,0,0,0.92)');
+  const ruleFill = tc('white', '#1a1a1a');
+  const hairlineFill = tc('rgba(255,255,255,0.85)', 'rgba(0,0,0,0.85)');
+  return [
+    `<g filter="url(#tshadow)">`,
+    `<text x="${x}" y="250" font-family="${fontFamily}" font-size="${size}" font-weight="900" letter-spacing="-0.035em" fill="${titleFill}">${esc(input.folder)}</text>`,
+    `<text x="${x}" y="352" font-family="${fontFamily}" font-size="92" font-weight="400" font-style="italic" fill="${dateFill}">${esc(input.dateLabel)}</text>`,
+    `<rect x="${x}" y="398" width="944" height="3" fill="${ruleFill}"/>`,
+    `<rect x="${x}" y="406" width="944" height="1" fill="${hairlineFill}"/>`,
+    `</g>`,
+  ];
+}
+
+/** 1b — the-drop: optical centre, black stroke halo instead of a drop shadow. */
+function buildDropTitle(input: CoverInput, theme: 'light' | 'dark'): string[] {
+  const tc = (dark: string, light: string) => (theme === 'dark' ? dark : light);
+  const fontFamily = FONT_FAMILIES['the-drop'];
+  const x = vw(6);
+  const titleText = input.folder.toUpperCase();
+  const dateText = input.dateLabel.toUpperCase();
+  const size = fitShrinkOnly(titleText, 230, TITLE_WIDTH_RATIO['the-drop'], 0.02);
+  const textFill = tc('white', '#1a1a1a');
+  const halo = tc('#000', '#fff');
+  return [
+    `<g filter="url(#tshadow)">`,
+    `<text x="${x}" y="720" font-family="${fontFamily}" font-size="${size}" letter-spacing="0.02em" fill="${textFill}" paint-order="stroke" stroke="${halo}" stroke-width="16" stroke-opacity="0.55" stroke-linejoin="round">${esc(titleText)}</text>`,
+    `<text x="${x}" y="828" font-family="${fontFamily}" font-size="86" letter-spacing="0.06em" fill="${textFill}" paint-order="stroke" stroke="${halo}" stroke-width="10" stroke-opacity="0.55" stroke-linejoin="round">${esc(dateText)}</text>`,
+    `</g>`,
+  ];
+}
+
+/** 1c — the-review: upper third, ruled above and below, centre-aligned. */
+function buildReviewTitle(input: CoverInput, theme: 'light' | 'dark'): string[] {
+  const tc = (dark: string, light: string) => (theme === 'dark' ? dark : light);
+  const fontFamily = FONT_FAMILIES['the-review'];
+  const cx = W / 2;
+  const size = fitShrinkOnly(input.folder, 150, TITLE_WIDTH_RATIO['the-review'], -0.02);
+  const titleFill = tc('white', '#1a1a1a');
+  const dateFill = tc('rgba(255,255,255,0.92)', 'rgba(0,0,0,0.92)');
+  const ruleStroke = tc('rgba(255,255,255,0.8)', 'rgba(0,0,0,0.8)');
+  const half = vw(15);
+  return [
+    `<g filter="url(#tshadow)">`,
+    `<line x1="${cx - half}" y1="452" x2="${cx + half}" y2="452" stroke="${ruleStroke}" stroke-width="2"/>`,
+    `<text x="${cx}" y="592" font-family="${fontFamily}" font-size="${size}" font-style="italic" letter-spacing="-0.02em" fill="${titleFill}" text-anchor="middle">${esc(input.folder)}</text>`,
+    `<text x="${cx}" y="690" font-family="${fontFamily}" font-size="84" font-style="italic" fill="${dateFill}" text-anchor="middle">${esc(input.dateLabel)}</text>`,
+    `<line x1="${cx - half}" y1="738" x2="${cx + half}" y2="738" stroke="${ruleStroke}" stroke-width="2"/>`,
+    `</g>`,
+  ];
+}
+
+/** 1d — the-signal: full-bleed black chyron, rule to rule. Height follows line count. */
+function buildSignalTitle(input: CoverInput, theme: 'light' | 'dark'): string[] {
+  const tc = (dark: string, light: string) => (theme === 'dark' ? dark : light);
+  const fontFamily = FONT_FAMILIES['the-signal'];
+  const x = vw(6);
+  const titleText = input.folder.toUpperCase();
+  const dateText = input.dateLabel.toUpperCase();
+  const fit = fitSignalTitle(titleText, 150, TITLE_WIDTH_RATIO['the-signal'], -0.02);
+  const lines = fit.lines.length;
+
+  const lineAdvance = 138;
+  const plateTop = 618;
+  const plateH = 390 - (2 - lines) * lineAdvance;
+  const titleBase1 = plateTop + 140;
+  const dateBase = titleBase1 + (lines - 1) * lineAdvance + 82;
+  const topRuleY = plateTop - 4;
+  const bottomRuleY = plateTop + plateH;
+
+  const ruleFill = tc('#555', '#999');
+  const plateFill = tc('#000', '#e8e8e8');
+  const titleFill = tc('white', '#1a1a1a');
+  const dateFill = tc('rgba(255,255,255,0.9)', 'rgba(0,0,0,0.9)');
+
+  const els: string[] = [
+    `<rect x="0" y="${topRuleY}" width="${W}" height="4" fill="${ruleFill}"/>`,
+    `<rect x="0" y="${plateTop}" width="${W}" height="${plateH}" fill="${plateFill}" opacity="0.86"/>`,
+    `<rect x="0" y="${bottomRuleY}" width="${W}" height="4" fill="${ruleFill}"/>`,
+  ];
+  fit.lines.forEach((line, i) => {
+    const y = titleBase1 + i * lineAdvance;
+    els.push(
+      `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${fit.size}" font-weight="800" letter-spacing="-0.02em" fill="${titleFill}">${esc(line)}</text>`,
+    );
+  });
+  els.push(
+    `<text x="${x}" y="${dateBase}" font-family="${fontFamily}" font-size="78" font-weight="500" letter-spacing="0.01em" fill="${dateFill}">${esc(dateText)}</text>`,
+  );
+  return els;
+}
+
+const TITLE_BUILDERS: Record<TemplateId, (input: CoverInput, theme: 'light' | 'dark') => string[]> = {
+  broadsheet: buildBroadsheetTitle,
+  'the-drop': buildDropTitle,
+  'the-review': buildReviewTitle,
+  'the-signal': buildSignalTitle,
+};
+
+function buildFeedList(
+  cfg: FeedCfg,
   fontFamily: string,
   feeds: Array<{ name: string; count: number }>,
-  weekday: string,
-  folder: string,
-  dateLabel: string,
   theme: 'light' | 'dark',
 ): string[] {
   const tc = (dark: string, light: string) => (theme === 'dark' ? dark : light);
-  const els: string[] = [];
   const x = cfg.align === 'center' ? W / 2 : vw(cfg.sidePad);
   const anchor = cfg.align === 'center' ? 'middle' : 'start';
+  let y = H - vh(cfg.bottomPad);
 
-  let y = H - Math.round((H * cfg.bottomPad) / 100);
-
-  // Feed list (max 8)
   const cappedFeeds = feeds.slice(0, 8);
   if (feeds.length > 8) cappedFeeds.push({ name: `…and ${feeds.length - 8} more`, count: 0 });
-  const fSize = vw(cfg.feedSize);
-  const fLH = Math.round(fSize * 1.55);
 
   const feedFill = tc('white', '#1a1a1a');
+  const weightAttr = cfg.weight ? ` font-weight="${cfg.weight}"` : '';
   const feedEls: string[] = [];
   for (let i = cappedFeeds.length - 1; i >= 0; i--) {
     const f = cappedFeeds[i];
-    const label = cfg.feedUppercase ? f.name.toUpperCase() : f.name;
+    const label = cfg.uppercase ? f.name.toUpperCase() : f.name;
     const countStr = f.count > 0 ? `  ${f.count}` : '';
     feedEls.unshift(
-      `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${fSize}" fill="${feedFill}" text-anchor="${anchor}" opacity="0.9">${esc(label + countStr)}</text>`,
+      `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${cfg.size}"${weightAttr} fill="${feedFill}" text-anchor="${anchor}" opacity="0.9">${esc(label + countStr)}</text>`,
     );
-    y -= fLH;
+    y -= cfg.lineHeight;
   }
-  els.push(...feedEls);
-
-  // Divider
-  y -= Math.round(H * 0.01);
-  const dividerStroke = tc('rgba(255,255,255,0.45)', 'rgba(0,0,0,0.45)');
-  if (cfg.align === 'center') {
-    const hw = vw(15);
-    els.push(
-      `<line x1="${W / 2 - hw}" y1="${y}" x2="${W / 2 + hw}" y2="${y}" stroke="${dividerStroke}" stroke-width="1"/>`,
-    );
-  } else {
-    els.push(
-      `<line x1="${vw(cfg.sidePad)}" y1="${y}" x2="${vw(cfg.sidePad) + vw(15)}" y2="${y}" stroke="${dividerStroke}" stroke-width="1"/>`,
-    );
-  }
-
-  void dateLabel; // available for future use (e.g. theSignal date-in-divider)
-
-  y -= Math.round(H * 0.01);
-
-  // Folder subtitle
-  const folderSize = vw(cfg.folderSize);
-  const folderFill = tc('rgba(255,255,255,0.72)', 'rgba(0,0,0,0.72)');
-  els.push(
-    `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${folderSize}" font-style="italic" fill="${folderFill}" text-anchor="${anchor}">${esc(folder)}</text>`,
-  );
-  y -= Math.round(folderSize * 1.3);
-
-  // Weekday headline
-  const wdSize = vw(cfg.weekdaySize);
-  const wdText = cfg.weekdayUppercase ? weekday.toUpperCase() : weekday;
-  const weekdayFill = tc('white', '#1a1a1a');
-  els.push(
-    `<text x="${x}" y="${y}" font-family="${fontFamily}" font-size="${wdSize}" font-weight="${cfg.weekdayWeight}" font-style="${cfg.weekdayItalic ? 'italic' : 'normal'}" fill="${weekdayFill}" text-anchor="${anchor}" letter-spacing="${cfg.weekdayLetterSpacing}">${esc(wdText)}</text>`,
-  );
-
-  return els;
+  return feedEls;
 }
 
 // Per-template image adjustments for light theme (brighten, reduce contrast).
@@ -291,35 +376,32 @@ const IMAGE_ADJUST_LIGHT: Record<TemplateId, { contrast: number; brightness: num
   'the-signal': { contrast: 0.85, brightness: 1.5 },
 };
 
-function buildCoverSvg(
+export function buildCoverSvg(
   templateId: TemplateId,
   input: CoverInput & { glyph: string },
   fonts: LoadedFont[],
   theme: 'light' | 'dark',
 ): string {
-  const cfg = CFGS[templateId];
   const fontFamily = FONT_FAMILIES[templateId];
   const fontFaceCss = buildFontFaceCss(templateId, fonts);
 
   const gradBase = theme === 'light' ? '255,255,255' : '0,0,0';
-  const gradientStops = cfg.gradient
+  const gradientStops = GRADIENTS[templateId]
     .map(([offset, color]) => {
       const c = theme === 'light' ? color.replace('0,0,0', gradBase) : color;
       return `<stop offset="${Math.round(offset * 100)}%" stop-color="${c}"/>`;
     })
     .join('');
 
+  // The drop-shadow / stroke-halo contrast treatments below are specified for
+  // dark theme only; for light theme we flip the flood color the same way the
+  // rest of this file flips ink colors, so the shadow still reads as a halo
+  // rather than a smudge under dark-on-light text.
+  const shadowFlood = theme === 'light' ? '#fff' : '#000';
+
   const headerEls = buildHeaderElements(templateId, input.glyph, fontFamily, theme);
-  const bottomEls = buildBottomZone(
-    templateId,
-    cfg,
-    fontFamily,
-    input.feeds,
-    input.weekday,
-    input.folder,
-    input.dateLabel,
-    theme,
-  );
+  const titleEls = TITLE_BUILDERS[templateId](input, theme);
+  const feedEls = buildFeedList(FEED_CFGS[templateId], fontFamily, input.feeds, theme);
 
   const decorationEls: string[] = [];
   if (templateId === 'the-review') {
@@ -334,11 +416,13 @@ function buildCoverSvg(
 <defs>
 <style>${fontFaceCss}</style>
 <linearGradient id="grad" x1="0" y1="0" x2="0" y2="1">${gradientStops}</linearGradient>
+<filter id="tshadow" x="-25%" y="-25%" width="150%" height="150%"><feDropShadow dx="0" dy="5" stdDeviation="14" flood-color="${shadowFlood}" flood-opacity="0.85"/></filter>
 </defs>
 <rect width="${W}" height="${H}" fill="url(#grad)"/>
 ${headerEls.join('\n')}
 ${decorationEls.join('\n')}
-${bottomEls.join('\n')}
+${titleEls.join('\n')}
+${feedEls.join('\n')}
 </svg>`;
 }
 
