@@ -33,7 +33,7 @@ Reading happens on the Kindle, not in the browser.
 | Extraction     | @mozilla/readability + jsdom        | Full-text fallback when feed content is too short. |
 | Images         | sharp                               | **Server-side** grayscale/resize (CSS `filter:grayscale` is unreliable on Kindle). |
 | QR codes       | qrcode                              | Per-article source links, ≥200×200 for e-ink. |
-| EPUB           | custom writer over jszip            | Full control of OPF series metadata, spine order, embedded fonts, cover XHTML. |
+| EPUB           | custom writer over jszip            | Full control of OPF series/periodical metadata, spine order, embedded fonts, NCX + guide for Kindle stacking. |
 | Time/scheduler | luxon                               | Timezone-correct daily delivery + hourly feed refresh. |
 | Email          | nodemailer                          | SMTP delivery to Kindle. |
 | Tests          | vitest                              | Core-logic tests; no mocked HTTP needed (reader backed by in-memory SQLite). |
@@ -51,8 +51,8 @@ src/
   reader/        app-facing types (NormalizedArticle) + ReaderClient (SQLite-backed)
   rss/           fetcher.ts (fetch + parse feeds), opml.ts (OPML import parser)
   content/       extract (Readability), images (sharp), qr (qrcode)
-  cover/         hash, 4 template renderers, render entry
-  epub/          writer (jszip), opf, nav, css
+  cover/         hash, 4 template configs, sharp-composited raster render (composite.ts)
+  epub/          writer (jszip), opf, nav, toc, ncx, masthead, sectionIndex, css
   diagnostics/   diagnostics page builder
   digest/        orchestrator: grouping + build + send per folder
   mail/          nodemailer transport
@@ -99,6 +99,17 @@ Feeds are managed entirely within the app — no external RSS reader needed.
   `setInterval`. Manual refresh available via the Refresh all button.
 - **Article retention:** Read articles older than 30 days are pruned on
   each refresh cycle.
+- **Per-folder settings** (`/feeds/:folder/cadence`, `/feeds/:folder/cover`):
+  cadence (`daily` | `weekly` + delivery day), and an optional cover
+  template/theme override (else auto-assigned by folder-name hash).
+- **Folder management:** rename a folder or move a feed between folders
+  from `/feeds`.
+- **Dashboard date picker:** the dashboard can view/curate/send a past date's
+  digest, not just today's (`?date=YYYY-MM-DD`); article lists collapse by
+  default under each folder header.
+- **Download without email:** `/download/:folder` and `/download-all` (zip of
+  every folder's EPUB) let you grab the generated files directly, no SMTP
+  round-trip needed — useful for testing the pipeline without Kindle delivery.
 
 ## Full-text detection
 
@@ -120,26 +131,81 @@ your feeds.
 - **Grayscale server-side** via sharp. Do not rely on CSS `filter:grayscale`.
 - **Self-contained EPUBs.** Fonts embedded as woff2 in `fonts/` with
   `@font-face`; no external CDN links anywhere in the EPUB.
-- **Series metadata:** series name = folder name; series index = ISO date
-  string (e.g. `2025-01-15`). Drives Kindle collection grouping.
+- **Series metadata:** series name = folder name; series index is currently
+  written as the plain ISO date string (e.g. `2026-06-07`) via
+  `belongs-to-collection` + calibre `calibre:series_index` (`src/epub/opf.ts`,
+  set in `src/digest/orchestrator.ts`). **Note:** an earlier fix (commit
+  `cc1d42f`) found Kindle requires `group-position` to be a *numeric* string
+  (used `YYYYMMDD`, e.g. `20260607`) or it silently ignores the series and
+  never stacks the books — but that fix was lost when series metadata was
+  reworked during the periodical-format detour (`de9793f`) and never
+  reapplied. Re-verify in Kindle Previewer before trusting collection
+  grouping; if stacking doesn't work, this is the first place to check.
 - **Cover hash is stable** (djb2-xor, see `src/cover/hash.ts`) — a folder's
-  template/glyph must never change day-to-day.
-- **Kindle series via EPUB3 `belongs-to-collection`**; ISO date is
-  non-numeric as `group-position`, so we also write calibre series meta.
-  Verify grouping in Kindle Previewer.
+  auto-assigned template/glyph must never change day-to-day. A folder can
+  also override its template/theme explicitly via `/feeds/:folder/cover`
+  (stored in `folder_settings`, see `src/db/feedRepos.ts`).
+- **Covers are rasterized, not CSS.** `src/cover/composite.ts` renders the
+  full cover (gradient, text, glyph) as a single JPEG via sharp at
+  1072×1448 (Kindle Paperwhite); the EPUB cover XHTML is just a full-bleed
+  `<img>` wrapper (`src/cover/render.ts`). This replaced the original
+  CSS-in-XHTML template approach because Kindle's e-ink renderer didn't
+  reliably apply flexbox/gradients. `test/cover-render.test.ts` still
+  asserts against the old CSS-XHTML output and is stale (see Current status).
+- **Dual Kindle grouping mechanisms present at once:** the OPF sets both
+  `<dc:type>magazine</dc:type>` + a `<guide>` (periodical navigation) *and*
+  `belongs-to-collection` series metadata. These come from two different
+  iteration attempts (periodical/Calibre-recipe vs. series/collection) and
+  their interaction on-device hasn't been re-confirmed since being combined.
 - **OPML nesting:** only two levels are common (folder → feed). Deeper nesting
   is flattened to the nearest named parent folder.
 
 ## Current status
 
-- **2026-06-08** — V2: replaced Inoreader dependency with self-hosted RSS.
-  App now manages its own feed list + read state in SQLite. Added:
-  `src/reader/` (ReaderClient over SQLite), `src/rss/` (rss-parser fetcher +
-  OPML import), `src/db/feedRepos.ts` (FeedRepo + ArticleRepo), `/feeds` UI
-  (add/delete/refresh/OPML upload), hourly feed refresh scheduler.
-  `@fastify/multipart` added for OPML file upload. No external service
-  dependencies beyond SMTP.
-  - **Next / not yet done:** live SMTP send test; confirm Kindle series
-    grouping in Kindle Previewer; tune `FULLTEXT_MIN_CHARS` against real feeds;
-    optional in-article image embedding.
+- **2026-06-10** — This section was stale (last updated 2026-06-08) despite
+  ~20 commits of real iteration on top of it — refreshed after a status
+  review. Since V2 (self-hosted RSS), the project has been driven mostly by
+  live testing against real feeds and an actual Kindle:
+  - **Cover system rewritten**: moved from CSS-in-XHTML templates to
+    sharp-composited raster JPEGs (`src/cover/composite.ts`, 1072×1448)
+    because Kindle's e-ink renderer didn't apply the CSS reliably. Added
+    light/dark theme variants and per-folder template/theme overrides.
+  - **Output format churn, resolved**: briefly tried MOBI, confirmed Amazon
+    rejects it, reverted to EPUB (see commit `1c6cfa9`/`45e2cb3`) — MOBI is
+    definitively out, EPUB-only stands.
+  - **Kindle stacking iteration**: went EPUB series metadata → Calibre
+    recipe/periodical pipeline → rolled back to the custom EPUB builder with
+    periodical `<dc:type>` + `<guide>` *and* series `belongs-to-collection`
+    both present. See the "dual Kindle grouping mechanisms" gotcha above —
+    the numeric `group-position` fix from `cc1d42f` appears to have been
+    lost in this churn and should be re-verified.
+  - **Feed/folder management grew**: per-folder cadence (daily/weekly),
+    folder rename, feed move, retroactive date-scoped dashboard, direct
+    EPUB/zip download endpoints alongside email send.
+  - **Image extraction hardening**: webcomic/SMBC-style feeds (short body,
+    image-only content) needed a raised image-only text threshold (350
+    chars) plus a Readability-failure safety net that falls back to feed
+    content when an `<img>` is present.
+  - Config/crypto (`src/config/crypto.ts`) and `TokenRepo`/`oauth_tokens`
+    (`src/db/repositories.ts`) are **dead code** left over from the
+    Inoreader-OAuth era (V1) — nothing in `src/app/context.ts` wires them up
+    anymore. Safe to delete when convenient; harmless to leave.
+  - **Test suite has real drift**: `npm test` currently reports 11/60 failing,
+    all in `test/cover-render.test.ts` (asserts the old CSS-XHTML cover
+    markup — obsolete now that covers are rasterized) and one bound check in
+    `test/images.test.ts` (asserts 1200×900, current cover source is
+    1600×2400). These are stale-test debt from the cover rewrite, not
+    regressions in app behavior — but they mean `npm test` is not currently a
+    reliable signal. Needs a rewrite against `composite.ts`.
+  - `npm run lint` has one real error: `src/content/sanitize.ts` intentionally
+    matches literal zero-width/soft-hyphen characters in a regex, which
+    ESLint's `no-irregular-whitespace` flags. Needs an inline disable comment
+    or a switch to `​`-style escapes — not a functional bug.
+  - `npm run typecheck` and `npm run build` are clean.
+  - **Next / not yet done:** rewrite `test/cover-render.test.ts` +
+    `test/images.test.ts` against the current raster cover pipeline;
+    re-verify Kindle series/periodical stacking on-device (numeric
+    group-position question above); fix the lint error; decide whether to
+    delete the dead Inoreader-token code; tune `FULLTEXT_MIN_CHARS` further
+    as new feeds are added.
   - Update this section at the start of every session.
