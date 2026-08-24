@@ -41,6 +41,7 @@ const STYLE = `
   .notice { background:#fff8e1; border:1px solid #f0d000; padding:12px 16px; border-radius:8px; margin-bottom:16px; }
   .result { padding:10px 16px; border-radius:6px; margin:8px 0; }
   .result.sent { background:#e8f7ee; } .result.error { background:#fde8e8; } .result.skipped { background:#eee; }
+  .result.queued { background:#e8f0fb; }
   .muted { color:var(--muted); }
   .row { display:flex; gap:8px; align-items:flex-end; }
   .row input { flex:1; }
@@ -175,11 +176,13 @@ export function sendResults(results: FolderSendResult[]): string {
   return results
     .map((r) => {
       const msg =
-        r.status === 'sent'
-          ? `Sent ${r.articleCount} article(s).`
-          : r.status === 'skipped'
-            ? r.message ?? 'Skipped.'
-            : `Error: ${r.message ?? 'unknown'}`;
+        r.status === 'queued'
+          ? `${r.message ?? 'Queued'} — building and sending in the background.`
+          : r.status === 'sent'
+            ? `Sent ${r.articleCount} article(s).`
+            : r.status === 'skipped'
+              ? r.message ?? 'Skipped.'
+              : `Error: ${r.message ?? 'unknown'}`;
       return `<div class="result ${r.status}"><strong>${escapeHtml(r.folder)}:</strong> ${escapeHtml(msg)}</div>`;
     })
     .join('\n');

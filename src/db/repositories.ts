@@ -174,7 +174,13 @@ export class RunLogRepo {
       );
   }
 
-  finish(runId: number, status: 'sent' | 'error', durationMs: number, error?: string): void {
+  /**
+   * Close out a run. `built` means an EPUB was produced — it says nothing
+   * about delivery; `delivery.state` is the authority on whether mail was
+   * accepted. (This used to be hardcoded to 'sent' at the end of the build,
+   * which made a failed send indistinguishable from a delivered digest.)
+   */
+  finish(runId: number, status: 'built' | 'error', durationMs: number, error?: string): void {
     this.db
       .prepare(
         `UPDATE run_log SET finished_at = ?, duration_ms = ?, status = ?, error = ? WHERE id = ?`,
@@ -194,5 +200,232 @@ export class RunLogRepo {
       failureReason: (r.failure_reason as ArticleLogEntry['failureReason']) ?? null,
       extractMs: (r.extract_ms as number) ?? undefined,
     }));
+  }
+
+  /** Most recent runs, newest first. Used by the failure alert email. */
+  recent(limit = 10): RunSummary[] {
+    return this.db
+      .prepare(
+        `SELECT id, digest_date, folder, status, included, duration_ms, error, started_at
+         FROM run_log ORDER BY id DESC LIMIT ?`,
+      )
+      .all(limit) as RunSummary[];
+  }
+}
+
+export interface RunSummary {
+  id: number;
+  digest_date: string;
+  folder: string;
+  status: string;
+  included: number;
+  duration_ms: number | null;
+  error: string | null;
+  started_at: number;
+}
+
+// ─── Delivery outbox ─────────────────────────────────────────────────────────
+
+export type DeliveryState =
+  | 'pending'
+  | 'building'
+  | 'built'
+  | 'sending'
+  | 'sent'
+  | 'failed'
+  | 'skipped';
+
+export interface DeliveryRow {
+  id: number;
+  digest_date: string;
+  folder: string;
+  state: DeliveryState;
+  attempts: number;
+  next_attempt_at: number;
+  epub_path: string | null;
+  epub_bytes: number | null;
+  article_count: number | null;
+  message_id: string | null;
+  last_error: string | null;
+  claimed_at: number | null;
+  alerted_at: number | null;
+  created_at: number;
+  updated_at: number;
+}
+
+/**
+ * The durable outbox. Every state transition is a committed write, so a crash
+ * or OOM at any point leaves a row that the startup sweep can recover.
+ */
+export class DeliveryRepo {
+  constructor(private db: DB) {}
+
+  /**
+   * Queue a digest for delivery. Idempotent via UNIQUE(digest_date, folder):
+   * a double-clicked "Send all", a duplicated scheduler timer and the startup
+   * catch-up can all race without ever producing two emails.
+   * Returns true if a new row was created.
+   */
+  enqueue(digestDate: string, folder: string, now: number = Date.now()): boolean {
+    const info = this.db
+      .prepare(
+        `INSERT INTO delivery
+           (digest_date, folder, state, next_attempt_at, created_at, updated_at)
+         VALUES (?, ?, 'pending', ?, ?, ?)
+         ON CONFLICT (digest_date, folder) DO NOTHING`,
+      )
+      .run(digestDate, folder, now, now, now);
+    return info.changes > 0;
+  }
+
+  get(id: number): DeliveryRow | undefined {
+    return this.db.prepare('SELECT * FROM delivery WHERE id = ?').get(id) as DeliveryRow | undefined;
+  }
+
+  find(digestDate: string, folder: string): DeliveryRow | undefined {
+    return this.db
+      .prepare('SELECT * FROM delivery WHERE digest_date = ? AND folder = ?')
+      .get(digestDate, folder) as DeliveryRow | undefined;
+  }
+
+  /**
+   * Atomically claim the next due row. `pending` moves to `building`; `built`
+   * moves straight to `sending` so a send retry never rebuilds the EPUB.
+   * The conditional UPDATE is the lock — if another tick already took the row,
+   * `changes` is 0 and we skip it.
+   */
+  claimDue(now: number = Date.now()): DeliveryRow | undefined {
+    for (;;) {
+      const candidate = this.db
+        .prepare(
+          `SELECT * FROM delivery
+           WHERE state IN ('pending', 'built') AND next_attempt_at <= ?
+           ORDER BY next_attempt_at, id LIMIT 1`,
+        )
+        .get(now) as DeliveryRow | undefined;
+      if (!candidate) return undefined;
+
+      const target: DeliveryState = candidate.state === 'built' ? 'sending' : 'building';
+      const info = this.db
+        .prepare(
+          `UPDATE delivery SET state = ?, claimed_at = ?, updated_at = ?
+           WHERE id = ? AND state = ?`,
+        )
+        .run(target, now, now, candidate.id, candidate.state);
+      if (info.changes === 1) return this.get(candidate.id);
+      // Lost the race; try the next candidate.
+    }
+  }
+
+  markBuilt(id: number, epubPath: string, epubBytes: number, articleCount: number): void {
+    this.db
+      .prepare(
+        `UPDATE delivery
+         SET state = 'built', epub_path = ?, epub_bytes = ?, article_count = ?,
+             claimed_at = NULL, next_attempt_at = ?, updated_at = ?, last_error = NULL
+         WHERE id = ?`,
+      )
+      .run(epubPath, epubBytes, articleCount, Date.now(), Date.now(), id);
+  }
+
+  markSent(id: number, messageId: string | null): void {
+    const now = Date.now();
+    this.db
+      .prepare(
+        `UPDATE delivery
+         SET state = 'sent', message_id = ?, claimed_at = NULL, last_error = NULL, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(messageId, now, id);
+  }
+
+  /** Nothing to deliver (no included articles). Terminal, but not a failure. */
+  markSkipped(id: number, reason: string): void {
+    const now = Date.now();
+    this.db
+      .prepare(
+        `UPDATE delivery SET state = 'skipped', last_error = ?, claimed_at = NULL, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(reason, now, id);
+  }
+
+  /**
+   * Record a failed attempt. Goes back to `pending` (or `built`, preserving a
+   * successful build so the retry only re-sends) until retries are exhausted
+   * or the error is permanent, then `failed`.
+   */
+  recordFailure(
+    id: number,
+    error: string,
+    opts: { retry: boolean; nextAttemptAt: number; hasBuild: boolean },
+  ): DeliveryState {
+    const now = Date.now();
+    const next: DeliveryState = opts.retry ? (opts.hasBuild ? 'built' : 'pending') : 'failed';
+    this.db
+      .prepare(
+        `UPDATE delivery
+         SET state = ?, attempts = attempts + 1, last_error = ?,
+             next_attempt_at = ?, claimed_at = NULL, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(next, error.slice(0, 2000), opts.nextAttemptAt, now, id);
+    return next;
+  }
+
+  /**
+   * Recover rows abandoned mid-flight by a crash, OOM kill or restart. Without
+   * this they would sit in `building`/`sending` forever — the exact reason the
+   * old `run_log` filled up with permanently-'running' rows.
+   */
+  requeueStale(olderThanMs: number, now: number = Date.now()): number {
+    const cutoff = now - olderThanMs;
+    const info = this.db
+      .prepare(
+        `UPDATE delivery
+         SET state = CASE WHEN state = 'sending' AND epub_path IS NOT NULL THEN 'built'
+                          ELSE 'pending' END,
+             attempts = attempts + 1,
+             last_error = 'interrupted (process restart or out-of-memory)',
+             next_attempt_at = ?, claimed_at = NULL, updated_at = ?
+         WHERE state IN ('building', 'sending') AND claimed_at IS NOT NULL AND claimed_at < ?`,
+      )
+      .run(now, now, cutoff);
+    return info.changes;
+  }
+
+  /** Failed deliveries that still need their one-shot alert email. */
+  dueForAlert(): DeliveryRow[] {
+    return this.db
+      .prepare(`SELECT * FROM delivery WHERE state = 'failed' AND alerted_at IS NULL ORDER BY id`)
+      .all() as DeliveryRow[];
+  }
+
+  markAlerted(id: number): void {
+    this.db
+      .prepare('UPDATE delivery SET alerted_at = ?, updated_at = ? WHERE id = ?')
+      .run(Date.now(), Date.now(), id);
+  }
+
+  recent(limit = 20): DeliveryRow[] {
+    return this.db
+      .prepare('SELECT * FROM delivery ORDER BY id DESC LIMIT ?')
+      .all(limit) as DeliveryRow[];
+  }
+
+  /** EPUBs on disk that are no longer needed, for retention pruning. */
+  prunableArtifacts(beforeDate: string): DeliveryRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM delivery
+         WHERE epub_path IS NOT NULL AND digest_date < ? AND state IN ('sent', 'skipped', 'failed')`,
+      )
+      .all(beforeDate) as DeliveryRow[];
+  }
+
+  clearArtifact(id: number): void {
+    this.db
+      .prepare('UPDATE delivery SET epub_path = NULL, updated_at = ? WHERE id = ?')
+      .run(Date.now(), id);
   }
 }

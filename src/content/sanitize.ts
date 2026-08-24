@@ -21,6 +21,16 @@ export interface SanitizeResult {
  */
 export function sanitizeArticleHtml(html: string): SanitizeResult {
   const dom = new JSDOM(`<!DOCTYPE html><html><body>${html}</body></html>`);
+  try {
+    return sanitizeInDom(dom);
+  } finally {
+    // Runs for every article on every path, so an unclosed window here leaked
+    // a full DOM tree per article — the single largest source of build growth.
+    dom.window.close();
+  }
+}
+
+function sanitizeInDom(dom: JSDOM): SanitizeResult {
   const { document, XMLSerializer } = dom.window;
 
   for (const tag of STRIP_TAGS) {
@@ -69,7 +79,9 @@ export function sanitizeArticleHtml(html: string): SanitizeResult {
   // Strip zero-width spaces and soft hyphens from text nodes.
   const walker = document.createTreeWalker(document.body, 4 /* NodeFilter.SHOW_TEXT */);
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    const cleaned = node.textContent!.replace(/[​­]/g, '');
+    // U+200B zero-width space and U+00AD soft hyphen, written as
+    // escapes so they stay visible in review and in diffs.
+    const cleaned = node.textContent!.replace(/[\u200B\u00AD]/g, '');
     if (cleaned !== node.textContent) node.textContent = cleaned;
   }
 

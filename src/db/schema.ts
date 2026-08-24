@@ -88,7 +88,7 @@ export function migrate(db: DB): void {
       included      INTEGER NOT NULL DEFAULT 0,
       excluded      INTEGER NOT NULL DEFAULT 0,
       duration_ms   INTEGER,
-      status        TEXT NOT NULL DEFAULT 'running', -- running|sent|error
+      status        TEXT NOT NULL DEFAULT 'running', -- running|built|error
       error         TEXT
     );
 
@@ -103,6 +103,31 @@ export function migrate(db: DB): void {
       failure_reason  TEXT,   -- 'paywall' | 'js-rendered' | 'http-error' | null
       extract_ms      INTEGER
     );
+
+    -- Durable delivery outbox: one row per (date, folder) that must be
+    -- delivered. Survives crashes and restarts; the worker drives it through
+    -- the state machine. This — not run_log — is the truth about delivery.
+    CREATE TABLE IF NOT EXISTS delivery (
+      id              INTEGER PRIMARY KEY AUTOINCREMENT,
+      digest_date     TEXT NOT NULL,
+      folder          TEXT NOT NULL,
+      -- pending|building|built|sending|sent|failed|skipped
+      state           TEXT NOT NULL DEFAULT 'pending',
+      attempts        INTEGER NOT NULL DEFAULT 0,
+      next_attempt_at INTEGER NOT NULL,
+      epub_path       TEXT,     -- built artifact on the volume; retries reuse it
+      epub_bytes      INTEGER,  -- diagnostics only, nothing is keyed off this
+      article_count   INTEGER,
+      message_id      TEXT,     -- SMTP messageId — proof the server accepted it
+      last_error      TEXT,
+      claimed_at      INTEGER,  -- set while in building/sending; drives stale sweep
+      alerted_at      INTEGER,  -- failure alert sent once, never loops
+      created_at      INTEGER NOT NULL,
+      updated_at      INTEGER NOT NULL,
+      UNIQUE (digest_date, folder)
+    );
+
+    CREATE INDEX IF NOT EXISTS delivery_due ON delivery(state, next_attempt_at);
   `);
 
   // Idempotent column migrations for existing DBs.

@@ -160,7 +160,82 @@ your feeds.
 - **OPML nesting:** only two levels are common (folder → feed). Deeper nesting
   is flattened to the nearest named parent folder.
 
+## Delivery (durable outbox)
+
+Delivery is a persisted state machine, not an in-flight promise. The `delivery`
+table (`src/db/schema.ts`) holds one row per `(digest_date, folder)`, unique —
+which is the idempotency key that makes double-clicks, duplicate timers and the
+startup catch-up all safe.
+
+```
+pending ──claim──> building ──ok──> built ──claim──> sending ──accepted──> sent
+   ^                  │               ^                 │
+   └──── backoff ─────┴───────────────┴─────────────────┘   attempts++
+                                                            exhausted → failed → alert
+```
+
+- `src/delivery/worker.ts` drains it one row at a time (serial by design — that
+  is what bounds memory). `src/delivery/backoff.ts` is the pure retry schedule.
+- The scheduler (`src/scheduler/runner.ts`) only *enqueues*; it can no longer
+  hang or OOM, always re-arms in a `finally`, and `catchUp()` on boot queues a
+  slot missed while the machine was down.
+- A retry from `built` **re-sends without rebuilding** — the EPUB is already on
+  the volume at `DIGEST_DIR`.
+- `run_log.status` means **build** state (`running|built|error`), never
+  delivery. `delivery.state` is the only authority on whether mail was accepted,
+  and `sent` is written only after SMTP returns a `messageId`.
+- Failures email `ALERT_EMAIL` once (`alerted_at` guard). That alert rides the
+  same SMTP path that may be broken, so the outbox row — not the email — is the
+  record.
+
+## Memory profile (why long digests used to fail)
+
+Measured with `scripts/bench-digest.ts` (synthetic, or `--db` against the real
+volume). Peak RSS on a 512 MB VM:
+
+| articles | before | after |
+|----------|--------|-------|
+| 40       | 281 MB | 249 MB |
+| 157      | 361 MB | 316 MB |
+| 320      | 492 MB | 424 MB |
+
+The JS heap no longer scales at all (~35 MB flat, was 234 MB at 320 articles)
+because article pages and images are staged to disk as they're produced and
+streamed into the zip, rather than held as strings/Buffers until the end.
+Remaining growth is native allocator churn from sharp/jsdom, partly mitigated by
+`MALLOC_ARENA_MAX=2` (set in the Dockerfile). **Note the trend still rises** —
+~300+ article digests approach the ceiling, so if folders get much busier this
+needs revisiting (bounded batching, or a bigger VM).
+
 ## Current status
+
+- **2026-08-24** — Rebuilt delivery around a durable outbox after five digests
+  silently failed to send. Root causes found: `run_log` hardcoded `status='sent'`
+  at the *end of the build*, before mail was attempted, and `finish(…,'error',…)`
+  had no call site — so `error` was NULL in every row ever written and a failed
+  send was indistinguishable from a delivered one. Alongside that: no retry or
+  persistence of "needs sending", `void this.fire()` with no `.catch()` (one
+  throw stopped delivery permanently), no catch-up for a missed slot, and
+  discarded SMTP results.
+  - Added `delivery` table + `DeliveryRepo` + `DeliveryWorker`; scheduler is now
+    enqueue-only; send routes queue and return instead of blocking the request.
+  - SMTP: explicit timeouts, `info.accepted`/`rejected` inspected, transport
+    closed, transient vs permanent classification so a bad password fails fast.
+  - Memory: article pages and images staged to disk; JS heap now flat with
+    article count (see table above). 157-article weekly digest builds in ~14 s
+    at ~316 MB peak.
+  - Tests 88 passing (29 new: backoff, outbox state machine, SMTP classify).
+    typecheck + lint clean — the old `no-irregular-whitespace` error in
+    `sanitize.ts` is fixed too.
+  - **Note:** the jsdom-leak theory turned out to be wrong — closing windows
+    made no measurable difference (heap was flat; the growth was retained
+    XHTML strings). The `close()` calls were kept as correctness hygiene, but
+    do not credit them with the fix.
+  - **Next / not yet done:** verify against the real 2026-08-23 news digest on
+    the volume (`bench-digest.ts --db /data/kindle-digest.sqlite --folder News
+    --date 2026-08-23`); confirm a real Kindle delivery end-to-end; the two
+    long-standing `smoke-epub.ts` failures (numeric `group-position`, cover font
+    reference) are still open and predate this work.
 
 - **2026-06-10** — This section was stale (last updated 2026-06-08) despite
   ~20 commits of real iteration on top of it — refreshed after a status

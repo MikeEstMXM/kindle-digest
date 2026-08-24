@@ -18,6 +18,12 @@ export interface Env {
     timezone: string;
   };
   fulltextMinChars: number;
+  /** Directory built EPUBs are streamed to; lives on the Fly volume. */
+  digestDir: string;
+  /** Where delivery-failure alerts go. Defaults to the SMTP from-address. */
+  alertEmail?: string;
+  /** Attempts before a delivery is marked permanently failed. */
+  deliveryMaxAttempts: number;
 }
 
 let cached: Env | undefined;
@@ -42,6 +48,10 @@ export function loadEnv(): Env {
       timezone: process.env.TIMEZONE ?? 'America/New_York',
     },
     fulltextMinChars: Number(process.env.FULLTEXT_MIN_CHARS ?? 1800),
+    // Default alongside the DB so it lands on the mounted volume in production.
+    digestDir: process.env.DIGEST_DIR ?? './data/digests',
+    alertEmail: process.env.ALERT_EMAIL ?? process.env.SMTP_FROM,
+    deliveryMaxAttempts: Number(process.env.DELIVERY_MAX_ATTEMPTS ?? 5),
   };
   return cached;
 }

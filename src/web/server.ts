@@ -1,5 +1,5 @@
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
+import { readFileSync, createReadStream } from 'node:fs';
 import { DateTime } from 'luxon';
 import Fastify, { type FastifyInstance } from 'fastify';
 import formbody from '@fastify/formbody';
@@ -7,7 +7,13 @@ import multipart from '@fastify/multipart';
 import type { AppContext } from '../app/context.js';
 import { resolveSettings } from '../app/settings.js';
 import JSZip from 'jszip';
-import { sendAll, sendFolder, buildFolderEpub, buildAllEpubs, todayIso } from '../digest/service.js';
+import {
+  enqueueFolder,
+  enqueueDue,
+  buildFolderEpub,
+  buildAllEpubs,
+  todayIso,
+} from '../digest/service.js';
 import { fetchAllFeeds, fetchFeed } from '../rss/fetcher.js';
 import { parseOpml } from '../rss/opml.js';
 import type { DailyScheduler } from '../scheduler/runner.js';
@@ -93,7 +99,7 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
 
   // ─── Toggle include/exclude ─────────────────────────────────────────────
   app.post('/toggle', async (req, reply) => {
-    const b = req.body as Record<string, string>;
+    const b = (req.body ?? {}) as Record<string, string>;
     const included = b.included === 'true';
     ctx.selection.setIncluded(b.date, b.itemId, b.folder, included);
     return reply
@@ -109,13 +115,21 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
   });
 
   // ─── Manual send ────────────────────────────────────────────────────────
+  // These queue and return immediately. Building and sending inside the
+  // request used to hold the connection open for the whole run (Fastify's
+  // requestTimeout is 0), so a slow digest looked like a hung tab and a
+  // proxy timeout looked like failure — prompting re-clicks and duplicates.
   app.post('/send/:folder', async (req, reply) => {
     const folder = decodeURIComponent((req.params as { folder: string }).folder);
-    const b = req.body as Record<string, string>;
+    const b = (req.body ?? {}) as Record<string, string>;
     const dateOverride = /^\d{4}-\d{2}-\d{2}$/.test(b.date ?? '') ? b.date : undefined;
     try {
-      const result = await sendFolder(ctx, folder, dateOverride);
-      return reply.type('text/html').send(sendResults([result]));
+      const isoDate = enqueueFolder(ctx, folder, dateOverride);
+      return reply.type('text/html').send(
+        sendResults([
+          { folder, articleCount: 0, status: 'queued', message: `Queued for ${isoDate}` },
+        ]),
+      );
     } catch (err) {
       return reply.type('text/html').send(
         sendResults([
@@ -126,10 +140,33 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
   });
 
   app.post('/send-all', async (req, reply) => {
-    const b = req.body as Record<string, string>;
+    const b = (req.body ?? {}) as Record<string, string>;
     const dateOverride = /^\d{4}-\d{2}-\d{2}$/.test(b.date ?? '') ? b.date : undefined;
-    const results = await sendAll(ctx, dateOverride);
-    return reply.type('text/html').send(sendResults(results));
+    try {
+      // Manual "Send all" ignores cadence — an explicit click means now.
+      const folders = await enqueueDue(ctx, dateOverride, { ignoreCadence: true });
+      if (folders.length === 0) {
+        return reply
+          .type('text/html')
+          .send(sendResults([{ folder: 'All', articleCount: 0, status: 'skipped', message: 'No folders' }]));
+      }
+      return reply.type('text/html').send(
+        sendResults(
+          folders.map((folder) => ({
+            folder,
+            articleCount: 0,
+            status: 'queued' as const,
+            message: 'Queued',
+          })),
+        ),
+      );
+    } catch (err) {
+      return reply.type('text/html').send(
+        sendResults([
+          { folder: 'All', articleCount: 0, status: 'error', message: err instanceof Error ? err.message : String(err) },
+        ]),
+      );
+    }
   });
 
   // ─── Download ───────────────────────────────────────────────────────────
@@ -143,7 +180,7 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
       return reply
         .header('Content-Type', 'application/epub+zip')
         .header('Content-Disposition', `attachment; filename="${built.filename}"`)
-        .send(built.epub);
+        .send(createReadStream(built.epubPath));
     } catch (err) {
       return reply.code(500).type('text/plain').send(err instanceof Error ? err.message : String(err));
     }
@@ -158,12 +195,13 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
       const digests = await buildAllEpubs(ctx, dateOverride);
       if (digests.length === 0) return reply.code(404).type('text/plain').send('No articles to download');
       const zip = new JSZip();
-      for (const d of digests) zip.file(d.filename, d.epub);
-      const zipBuffer = await zip.generateAsync({ type: 'nodebuffer', compression: 'DEFLATE' });
+      // Stream each EPUB in from disk rather than holding every folder's
+      // archive in the heap at once.
+      for (const d of digests) zip.file(d.filename, createReadStream(d.epubPath));
       return reply
         .header('Content-Type', 'application/zip')
         .header('Content-Disposition', `attachment; filename="kindle-digest-${isoDate}.zip"`)
-        .send(zipBuffer);
+        .send(zip.generateNodeStream({ type: 'nodebuffer', streamFiles: true, compression: 'DEFLATE' }));
     } catch (err) {
       return reply.code(500).type('text/plain').send(err instanceof Error ? err.message : String(err));
     }
@@ -177,7 +215,7 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
   });
 
   app.post('/feeds/add', async (req, reply) => {
-    const b = req.body as Record<string, string>;
+    const b = (req.body ?? {}) as Record<string, string>;
     const url = (b.url ?? '').trim();
     const folder = (b.folder ?? '').trim() || 'Uncategorized';
     if (!url) return reply.redirect('/feeds');
@@ -204,7 +242,7 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
 
   app.post('/feeds/:id/move', async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    const b = req.body as Record<string, string>;
+    const b = (req.body ?? {}) as Record<string, string>;
     const folder = (b.folder ?? '').trim() || 'Uncategorized';
     ctx.feeds.moveToFolder(id, folder);
     return reply.redirect('/feeds');
@@ -212,7 +250,7 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
 
   app.post('/feeds/:folder/rename', async (req, reply) => {
     const oldName = decodeURIComponent((req.params as { folder: string }).folder);
-    const b = req.body as Record<string, string>;
+    const b = (req.body ?? {}) as Record<string, string>;
     const newName = (b.newName ?? '').trim();
     if (newName && newName !== oldName) {
       ctx.feeds.renameFolder(oldName, newName);
@@ -224,7 +262,7 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
 
   app.post('/feeds/:folder/cadence', async (req, reply) => {
     const folder = decodeURIComponent((req.params as { folder: string }).folder);
-    const b = req.body as Record<string, string>;
+    const b = (req.body ?? {}) as Record<string, string>;
     const cadence = b.cadence === 'weekly' ? 'weekly' : 'daily';
     const deliveryDay = Math.min(6, Math.max(0, Number(b.deliveryDay ?? 0)));
     ctx.folderSettings.set(folder, cadence, deliveryDay);
@@ -233,7 +271,7 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
 
   app.post('/feeds/:folder/cover', async (req, reply) => {
     const folder = decodeURIComponent((req.params as { folder: string }).folder);
-    const b = req.body as Record<string, string>;
+    const b = (req.body ?? {}) as Record<string, string>;
     const VALID_TEMPLATES: TemplateId[] = ['broadsheet', 'the-drop', 'the-review', 'the-signal'];
     const coverTemplate = VALID_TEMPLATES.includes(b.coverTemplate as TemplateId)
       ? (b.coverTemplate as TemplateId)
@@ -274,7 +312,7 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
   });
 
   app.post('/settings', async (req, reply) => {
-    const b = req.body as Record<string, string>;
+    const b = (req.body ?? {}) as Record<string, string>;
     const keys = [
       'kindleEmail',
       'deliveryTime',

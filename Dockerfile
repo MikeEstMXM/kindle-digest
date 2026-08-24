@@ -25,7 +25,9 @@ RUN npm run fetch-fonts
 # Default runtime config. Override secrets via Fly secrets / env.
 ENV NODE_ENV=production \
     PORT=3000 \
-    DATABASE_PATH=/data/kindle-digest.sqlite
+    DATABASE_PATH=/data/kindle-digest.sqlite \
+    DIGEST_DIR=/data/digests \
+    MALLOC_ARENA_MAX=2
 
 EXPOSE 3000
 VOLUME ["/data"]

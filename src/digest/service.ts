@@ -11,7 +11,7 @@ export type { BuiltDigest };
 export interface FolderSendResult {
   folder: string;
   articleCount: number;
-  status: 'sent' | 'skipped' | 'error';
+  status: 'queued' | 'sent' | 'skipped' | 'error';
   message?: string;
 }
 
@@ -61,6 +61,7 @@ export async function buildFolderEpub(
       timezone: settings.timezone,
       minChars: ctx.env.fulltextMinChars,
       fonts: loadFontBuffers(FONTS_DIR),
+      outDir: ctx.env.digestDir,
       coverTemplate: folderCfg.coverTemplate,
       coverTheme: folderCfg.coverTheme,
     },
@@ -83,51 +84,63 @@ export async function buildAllEpubs(
 }
 
 /**
- * Build + send the digest for a single folder: fetch unread, drop excluded,
- * generate the EPUB, email it, then mark those items read.
+ * Mail an already-built EPUB. Streams the attachment off disk and only
+ * resolves once the SMTP server has confirmed it accepted the recipient.
  */
-export async function sendFolder(
+export async function sendBuiltDigest(
   ctx: AppContext,
   folder: string,
-  dateOverride?: string,
-): Promise<FolderSendResult> {
+  isoDate: string,
+  epubPath: string,
+  filename: string,
+): Promise<{ messageId: string | null }> {
   const settings = resolveSettings(ctx.env, ctx.settings);
   const delivery = assertDeliverable(settings);
-  const isoDate = dateOverride ?? todayIso(settings.timezone);
-
-  const built = await buildFolderEpub(ctx, folder, dateOverride);
-  if (!built) {
-    return { folder, articleCount: 0, status: 'skipped', message: 'No included articles' };
-  }
 
   const transport = createTransport(delivery);
-  await sendEpub(
-    transport,
-    delivery,
-    delivery.to,
-    `${folder} — ${isoDate}`,
-    { filename: built.filename, content: built.epub },
-  );
-
-  return { folder, articleCount: built.itemIds.length, status: 'sent' };
+  try {
+    const outcome = await sendEpub(transport, delivery, delivery.to, `${folder} — ${isoDate}`, {
+      filename,
+      path: epubPath,
+    });
+    return { messageId: outcome.messageId };
+  } finally {
+    transport.close();
+  }
 }
 
-/** Build + send digests for every top-level folder that has included articles. */
-export async function sendAll(ctx: AppContext, dateOverride?: string): Promise<FolderSendResult[]> {
-  const client = ctx.readerClient();
-  const folders = await client.getFolders();
-  const results: FolderSendResult[] = [];
+/**
+ * Queue one folder for delivery. Returns immediately — the worker builds and
+ * sends. Idempotent: re-queueing an in-flight or completed digest is a no-op.
+ */
+export function enqueueFolder(ctx: AppContext, folder: string, dateOverride?: string): string {
+  const settings = resolveSettings(ctx.env, ctx.settings);
+  const isoDate = dateOverride ?? todayIso(settings.timezone);
+  ctx.delivery.enqueue(isoDate, folder);
+  return isoDate;
+}
+
+/**
+ * Queue every folder due on `isoDate`, respecting per-folder cadence. Used by
+ * the scheduler, the startup catch-up, and the manual "Send all" button.
+ * Returns the folders queued.
+ */
+export async function enqueueDue(
+  ctx: AppContext,
+  dateOverride?: string,
+  opts: { ignoreCadence?: boolean } = {},
+): Promise<string[]> {
+  const settings = resolveSettings(ctx.env, ctx.settings);
+  const isoDate = dateOverride ?? todayIso(settings.timezone);
+  const dow = DateTime.fromISO(isoDate, { zone: settings.timezone }).weekday % 7; // 0=Sun
+
+  const folders = await ctx.readerClient().getFolders();
+  const queued: string[] = [];
   for (const folder of folders) {
-    try {
-      results.push(await sendFolder(ctx, folder, dateOverride));
-    } catch (err) {
-      results.push({
-        folder,
-        articleCount: 0,
-        status: 'error',
-        message: err instanceof Error ? err.message : String(err),
-      });
-    }
+    const cfg = ctx.folderSettings.get(folder);
+    if (!opts.ignoreCadence && cfg.cadence === 'weekly' && cfg.deliveryDay !== dow) continue;
+    ctx.delivery.enqueue(isoDate, folder);
+    queued.push(folder);
   }
-  return results;
+  return queued;
 }

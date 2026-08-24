@@ -32,16 +32,31 @@ export function findCoverImageUrl(articleHtml: string, pageHtml?: string): strin
   return img?.[1];
 }
 
-/** Download an image to a Buffer. Throws on non-2xx. */
+/** Wall-clock bound on a single image download. */
+const IMAGE_FETCH_TIMEOUT_MS = 15_000;
+
+/**
+ * Download an image to a Buffer. Throws on non-2xx or timeout.
+ *
+ * The timeout is essential, not defensive: this runs up to 5x per article, and
+ * without it a single hung image host stalls an entire digest build forever.
+ */
 export async function downloadImage(
   url: string,
   fetchFn: typeof fetch = fetch,
 ): Promise<Buffer> {
-  const res = await fetchFn(url, {
-    headers: { 'User-Agent': 'kindle-digest/1.0 (+image fetch)' },
-  });
-  if (!res.ok) throw new Error(`Image fetch failed: ${res.status}`);
-  return Buffer.from(await res.arrayBuffer());
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), IMAGE_FETCH_TIMEOUT_MS);
+  try {
+    const res = await fetchFn(url, {
+      headers: { 'User-Agent': 'kindle-digest/1.0 (+image fetch)' },
+      signal: controller.signal,
+    });
+    if (!res.ok) throw new Error(`Image fetch failed: ${res.status}`);
+    return Buffer.from(await res.arrayBuffer());
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 /**

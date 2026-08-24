@@ -75,11 +75,16 @@ export async function extractFullText(
   }
 
   let article: { content: string | null; textContent: string | null } | null = null;
+  let dom: JSDOM | undefined;
   try {
-    const dom = new JSDOM(page.body, { url });
+    dom = new JSDOM(page.body, { url });
     article = new Readability(dom.window.document).parse();
   } catch {
     article = null;
+  } finally {
+    // jsdom windows hold timers and listeners that keep the whole DOM tree
+    // reachable; without this a long digest leaks one tree per article.
+    dom?.window.close();
   }
 
   const text = article?.textContent?.trim() ?? '';
