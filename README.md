@@ -70,7 +70,7 @@ rationale.
 ```bash
 git clone <repo> && cd kindle-digest
 npm install
-npm run fetch-fonts      # downloads + embeds the cover fonts (woff2)
+npm run fetch-fonts      # cover fonts: woff2 (EPUB) + ttf (cover rendering)
 
 cp .env.example .env     # fill in SMTP vars (all others are optional)
 npm run dev              # http://localhost:3000
@@ -114,7 +114,7 @@ No OAuth tokens or encryption keys are required.
 | Command | Description |
 |---------|-------------|
 | `npm run dev` | Dev server + scheduler (tsx watch). |
-| `npm run fetch-fonts` | Download + embed the cover fonts. |
+| `npm run fetch-fonts` | Download the cover fonts (woff2 + ttf). Both formats are committed, so this is normally a no-op. |
 | `npm test` | Run the test suite (core logic). |
 | `npm run lint` / `npm run typecheck` | Lint / type-check. |
 | `npm run build` && `npm start` | Compile and run production build. |

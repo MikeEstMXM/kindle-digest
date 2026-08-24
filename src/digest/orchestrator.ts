@@ -417,7 +417,6 @@ async function buildFolderDigestInner(
     const coverJpeg = await buildCoverJpeg(
       { folder, weekday, isoDate: opts.isoDate, dateLabel, feeds: feedCounts(articles) },
       rawCoverImage,
-      opts.fonts,
       opts.coverTemplate,
       opts.coverTheme,
     );

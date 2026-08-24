@@ -3,7 +3,7 @@ import sharp from 'sharp';
 import { renderCover } from '../src/cover/render.js';
 import { buildCoverSvg, buildCoverJpeg } from '../src/cover/composite.js';
 import { TEMPLATES, templateFor, glyphFor, type TemplateId } from '../src/cover/hash.js';
-import { FONT_FACES, TEMPLATE_FONTS } from '../src/cover/fonts.js';
+import { TEMPLATE_FONTS } from '../src/cover/fonts.js';
 
 function sampleInput(folder: string) {
   return {
@@ -18,17 +18,8 @@ function sampleInput(folder: string) {
   };
 }
 
-// Fonts aren't downloaded in CI; a dummy buffer per registered face is enough
-// to exercise the @font-face embedding path without hitting the filesystem.
-const DUMMY_FONTS = FONT_FACES.map((f) => ({ file: f.file, data: Buffer.from('woff2-bytes') }));
-
 function svgFor(folder: string, templateId: TemplateId, theme: 'light' | 'dark' = 'dark') {
-  return buildCoverSvg(
-    templateId,
-    { ...sampleInput(folder), glyph: glyphFor(folder) },
-    DUMMY_FONTS,
-    theme,
-  );
+  return buildCoverSvg(templateId, { ...sampleInput(folder), glyph: glyphFor(folder) }, theme);
 }
 
 /** Find one folder name that hashes to each template, for full coverage. */
@@ -59,11 +50,15 @@ describe('cover XHTML (render.ts)', () => {
 });
 
 describe('cover SVG (composite.ts)', () => {
-  it('embeds @font-face with base64 woff2 data (no external CDN)', () => {
+  it('carries no @font-face and no external font URL', () => {
+    // librsvg resolves families through fontconfig and ignores @font-face
+    // webfonts, so an embedded base64 face is inert weight (5-22 KB per cover)
+    // that also reads as though fonts were handled when they were not.
+    // Fonts reach the renderer via src/cover/fontconfig.ts instead.
     for (const id of TEMPLATES) {
       const svg = svgFor(folderForTemplate(TEMPLATES.indexOf(id)), id);
-      expect(svg).toContain('@font-face');
-      expect(svg).toMatch(/url\('data:font\/woff2;base64,/);
+      expect(svg).not.toContain('@font-face');
+      expect(svg).not.toContain('data:font/woff2;base64,');
       expect(svg).not.toMatch(/https?:\/\/fonts\.g/i);
     }
   });
@@ -138,12 +133,7 @@ describe('cover SVG (composite.ts)', () => {
       ...sampleInput('Technology'),
       feeds: Array.from({ length: 11 }, (_, i) => ({ name: `Feed ${i}`, count: i })),
     };
-    const svg = buildCoverSvg(
-      'broadsheet',
-      { ...input, glyph: glyphFor('Technology') },
-      DUMMY_FONTS,
-      'dark',
-    );
+    const svg = buildCoverSvg('broadsheet', { ...input, glyph: glyphFor('Technology') }, 'dark');
     expect(svg).toContain('…and 3 more');
     expect(svg).not.toContain('Feed 8<');
   });
@@ -171,13 +161,7 @@ describe('buildCoverJpeg', () => {
 
     for (const backgroundRaw of [bg, undefined]) {
       for (const theme of ['dark', 'light'] as const) {
-        const jpeg = await buildCoverJpeg(
-          sampleInput('Technology'),
-          backgroundRaw,
-          DUMMY_FONTS,
-          null,
-          theme,
-        );
+        const jpeg = await buildCoverJpeg(sampleInput('Technology'), backgroundRaw, null, theme);
         const meta = await sharp(jpeg).metadata();
         expect(meta.format).toBe('jpeg');
         expect(meta.width).toBe(1072);
@@ -193,7 +177,7 @@ describe('buildCoverJpeg', () => {
       .jpeg()
       .toBuffer();
 
-    const jpeg = await buildCoverJpeg(sampleInput('Technology'), bg, DUMMY_FONTS, null, 'dark');
+    const jpeg = await buildCoverJpeg(sampleInput('Technology'), bg, null, 'dark');
     // This strip sits over the background photo, not over an opaque overlay —
     // verified by rendering two differently coloured sources and confirming the
     // sampled luminance moves (67 vs 138). Were it overlay, the assertion below

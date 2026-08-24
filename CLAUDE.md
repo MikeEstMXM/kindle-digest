@@ -60,9 +60,9 @@ src/
   app/           context (DI), settings resolution
   web/           fastify server (server.ts) + views.ts (HTML template fns)
   index.ts       entry: start web server + scheduler + hourly feed refresh
-scripts/fetch-fonts.ts   download Google Fonts woff2 into assets/fonts/
+scripts/fetch-fonts.ts   download Google Fonts (woff2 + ttf) into assets/fonts/
 scripts/smoke-epub.ts    end-to-end EPUB build + structure validation
-assets/fonts/            embedded woff2 (committed)
+assets/fonts/            woff2 (EPUB) + ttf (fontconfig/metrics), committed
 test/                    vitest specs
 ```
 
@@ -79,7 +79,7 @@ test/                    vitest specs
 | Command              | What it does |
 |----------------------|--------------|
 | `npm install`        | Installs deps (builds native sharp/better-sqlite3). |
-| `npm run fetch-fonts`| Downloads required Google Fonts as woff2 into `assets/fonts/`. |
+| `npm run fetch-fonts`| Downloads required Google Fonts (woff2 + ttf) into `assets/fonts/`. Skips files already present. |
 | `npm run dev`        | Dev server (tsx watch) + scheduler + feed refresh. |
 | `npm run build`      | `tsc` → `dist/`. |
 | `npm start`          | Runs built app. |
@@ -150,8 +150,32 @@ your feeds.
   1072×1448 (Kindle Paperwhite); the EPUB cover XHTML is just a full-bleed
   `<img>` wrapper (`src/cover/render.ts`). This replaced the original
   CSS-in-XHTML template approach because Kindle's e-ink renderer didn't
-  reliably apply flexbox/gradients. `test/cover-render.test.ts` still
-  asserts against the old CSS-XHTML output and is stale (see Current status).
+  reliably apply flexbox/gradients.
+- **librsvg ignores `@font-face`. Cover fonts must go through fontconfig.**
+  sharp rasterizes the cover overlay via libvips → librsvg, which resolves
+  families through fontconfig only and silently drops webfonts embedded as
+  `src:url('data:font/woff2;base64,...')`. The cover did exactly that until
+  2026-08-24, so every cover rendered in Liberation/DejaVu instead of its
+  designed face. `src/cover/fontconfig.ts` now writes a generated `fonts.conf`
+  pointing at `assets/fonts` and exports `FONTCONFIG_FILE`; it runs as an
+  **import side effect** because fontconfig reads its config once, at first
+  use — setting the variable after anything has rendered text is ignored.
+  Two consequences worth remembering:
+  - `assets/fonts/` holds **both** formats. The woff2 is what the EPUB
+    embeds; the **ttf** is what fontconfig indexes and what `opentype.js`
+    reads metrics from (it cannot parse woff2). `FONT_FACES` names both.
+  - Google's static exports of a *variable* font carry the default instance's
+    name, so all three Bricolage weights self-report as `Bricolage Grotesque
+    96pt ExtraBold`. `FontFace.fcFamily` records that and the generated config
+    aliases the design name onto it. Check `fc-query` before adding a family.
+- **Title sizing measures the font, it does not estimate.** `src/cover/fontMetrics.ts`
+  sums real advance widths for the same family+weight+style librsvg will
+  resolve. The previous `characters × size × ratio` estimate was calibrated
+  against fonts that never rendered and was wrong both ways: The Signal
+  overflowed the 944 px budget (977 px at the size it chose — the clipped
+  cover), while The Drop's condensed Bebas was over-measured by ~1.8× and
+  shrank titles that had room. Measuring the wrong style is a bigger error
+  than the estimate was — an upright measured for an italic is ~14% off.
 - **Dual Kindle grouping mechanisms present at once:** the OPF sets both
   `<dc:type>magazine</dc:type>` + a `<guide>` (periodical navigation) *and*
   `belongs-to-collection` series metadata. These come from two different
@@ -288,6 +312,54 @@ before compression. A 3000×2000 source image is ~18 MB decoded and lands in the
 book at ~40 KB.
 
 ## Current status
+
+- **2026-08-24 (latest)** — Fixed the cover fonts. The visible symptom was a
+  title clipped off the right edge in a generic sans; the cause was two bugs
+  stacked, both pre-existing on `main` and invisible to the test suite.
+  - **`@font-face` never worked.** librsvg resolves through fontconfig and
+    ignores embedded webfonts, so the base64 face in every cover SVG was inert
+    and covers rendered in Liberation/DejaVu. Proven by rendering the same
+    string with the face embedded, without it, and under a nonexistent family:
+    all three byte-identical (1141×115), while a real installed font gave
+    1087×102. Fixed by `src/cover/fontconfig.ts` (generated `fonts.conf` +
+    `FONTCONFIG_FILE`, set as an import side effect) and by committing the
+    **ttf** twin of each woff2.
+  - **The fit maths was calibrated against fonts that never rendered.** Replaced
+    `TITLE_WIDTH_RATIO` with real advance widths (`src/cover/fontMetrics.ts`,
+    opentype.js). The Signal's "TECHNOLOGY" went 150 px → 142 px (977 px drawn,
+    over a 944 px budget → 925 px, inside it); The Drop's over-shrunk titles
+    went the other way, 126 px → 230 px. Broadsheet is unchanged at 140 px,
+    which is the check that the new measurement agrees where the old estimate
+    was already right.
+  - **Bricolage needed an alias.** Google's static instances of a variable font
+    are named after its default instance, so all three weights self-report as
+    `Bricolage Grotesque 96pt ExtraBold`. `FontFace.fcFamily` + a generated
+    fontconfig rule. Playfair, Bebas and EB Garamond are clean.
+  - **`Dockerfile` now `COPY assets ./assets`.** It previously never copied
+    `assets/` and re-downloaded all nine fonts from `gwfh.mranftl.com` on every
+    image build — a deploy-time dependency on a third-party host, and a way for
+    deployed bytes to drift from committed ones. `fetch-fonts` is now a no-op
+    guard in the image.
+  - Removed the inert `@font-face` embedding and the now-dead `fonts` parameter
+    from `buildCoverSvg`/`buildCoverJpeg` (5–22 KB of base64 per cover that also
+    read as though fonts were handled).
+  - Tests 121 passing (11 new in `test/cover-fonts.test.ts`, which assert
+    against the **raster**: that each family resolves to something other than
+    the fallback, and that every title's drawn ink fits the budget). Both fail
+    against the old code — verified, not assumed. typecheck + lint clean.
+    `smoke-epub.ts` unchanged: same two pre-existing failures, none new.
+    Bench 40 articles / 50 ms latency: 2.2 s, 339 MB — no regression.
+  - **Why the old tests could not catch this:** `DUMMY_FONTS` was
+    `Buffer.from('woff2-bytes')`, 11 bytes and not a parseable font, so every
+    cover assertion ran with librsvg unable to load a face and proved only that
+    the *string* contained `@font-face`. Any check of cover typography has to
+    rasterize.
+  - **Next / not yet done:** unchanged from below — the real-data bench run on
+    the volume, a real Kindle delivery end-to-end, and the two long-standing
+    `smoke-epub.ts` failures. Note the second of those, `cover references font`,
+    asserts `url('fonts/` against a cover XHTML that has been a bare `<img>`
+    wrapper since covers were rasterized; it is a stale assertion, not a
+    regression, and this work did not address it.
 
 - **2026-08-24 (later)** — Cut build memory *and* wall-clock, after the question
   "320 articles should still make an EPUB smaller than 10 MB — what's using the
