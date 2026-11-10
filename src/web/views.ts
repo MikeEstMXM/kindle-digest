@@ -1,4 +1,6 @@
 import { escapeHtml } from '../util/html.js';
+import { DateTime } from 'luxon';
+import type { DeliveryRow } from '../db/repositories.js';
 import type { NormalizedArticle } from '../reader/types.js';
 import type { EffectiveSettings } from '../app/settings.js';
 import type { FolderSendResult } from '../digest/service.js';
@@ -42,6 +44,15 @@ const STYLE = `
   .result { padding:10px 16px; border-radius:6px; margin:8px 0; }
   .result.sent { background:#e8f7ee; } .result.error { background:#fde8e8; } .result.skipped { background:#eee; }
   .result.queued { background:#e8f0fb; }
+  .deliveries { background:#fff; border:1px solid var(--line); border-radius:8px; margin-bottom:20px; padding:8px 16px; }
+  .deliveries h2 { font-size:15px; margin:6px 0; }
+  .delivery-row { padding:6px 0; border-bottom:1px solid #f0f0f0; font-size:14px; }
+  .delivery-row:last-child { border-bottom:0; }
+  .state { display:inline-block; min-width:76px; text-align:center; padding:1px 8px; border-radius:10px; font-size:12px; font-weight:600; background:#eee; }
+  .state.published, .state.sent { background:#e8f7ee; color:#0a6; }
+  .state.failed { background:#fde8e8; color:#c00; }
+  .state.pending, .state.building, .state.built, .state.sending { background:#e8f0fb; color:#146; }
+  .delivery-err { color:#c00; font-size:12px; margin-top:2px; white-space:pre-wrap; word-break:break-word; }
   .muted { color:var(--muted); }
   .row { display:flex; gap:8px; align-items:flex-end; }
   .row input { flex:1; }
@@ -172,12 +183,34 @@ export function dashboard(date: string, folders: DashboardFolder[]): string {
     ${sections}`;
 }
 
+/**
+ * Recent delivery outcomes, newest first. This is where a failed conversion (or
+ * a failed send) shows up — the outbox row is the record, not an email.
+ */
+export function deliveryPanel(rows: DeliveryRow[], timezone: string): string {
+  if (rows.length === 0) return '';
+  const items = rows
+    .map((r) => {
+      const when = DateTime.fromMillis(r.updated_at).setZone(timezone).toFormat('d LLL HH:mm');
+      const err =
+        r.state === 'failed' || r.last_error
+          ? `<div class="delivery-err">${escapeHtml((r.last_error ?? '').slice(0, 400))}</div>`
+          : '';
+      const retry = r.state !== 'failed' && r.last_error ? ` · retry ${r.attempts}` : '';
+      return `<div class="delivery-row"><span class="state ${escapeHtml(r.state)}">${escapeHtml(r.state)}</span>
+        <strong>${escapeHtml(r.folder)}</strong> ${escapeHtml(r.digest_date)}
+        <span class="muted">· ${escapeHtml(when)}${retry}</span>${err}</div>`;
+    })
+    .join('\n');
+  return `<section class="deliveries"><h2>Recent deliveries</h2>${items}</section>`;
+}
+
 export function sendResults(results: FolderSendResult[]): string {
   return results
     .map((r) => {
       const msg =
         r.status === 'queued'
-          ? `${r.message ?? 'Queued'} — building and sending in the background.`
+          ? `${r.message ?? 'Queued'} — building and delivering in the background.`
           : r.status === 'sent'
             ? `Sent ${r.articleCount} article(s).`
             : r.status === 'skipped'
@@ -340,10 +373,17 @@ export function settingsPage(s: EffectiveSettings, timezones: string[]): string 
     )
     .join('');
   return `<h1>Settings</h1>
-  <div class="notice"><strong>Kindle whitelist required.</strong> Add your SMTP <em>from</em> address
-    (<code>${escapeHtml(s.smtp.from ?? 'not set')}</code>) to Amazon's
-    <em>Approved Personal Document E-mail List</em>, or deliveries are silently dropped.</div>
   <form method="post" action="/settings">
+    <label class="field"><span>Delivery mode</span>
+      <select name="deliveryMode">
+        <option value="download"${s.deliveryMode === 'download' ? ' selected' : ''}>Kindle page — publish a periodical to download on the Kindle (no email)</option>
+        <option value="email"${s.deliveryMode === 'email' ? ' selected' : ''}>Email — send the EPUB to your @kindle.com address (issues will not stack)</option>
+      </select></label>
+    <p class="muted">Kindle page mode never uses the SMTP settings below. Open the Kindle page
+      (port 3100 by default) in the Kindle's browser to download issues.</p>
+    <div class="notice"><strong>Email mode only: Kindle whitelist required.</strong> Add your SMTP <em>from</em> address
+      (<code>${escapeHtml(s.smtp.from ?? 'not set')}</code>) to Amazon's
+      <em>Approved Personal Document E-mail List</em>, or deliveries are silently dropped.</div>
     <label class="field"><span>Kindle email (@kindle.com)</span>
       <input name="kindleEmail" type="email" value="${escapeHtml(s.kindleEmail ?? '')}" placeholder="you@kindle.com" /></label>
     <label class="field"><span>Delivery time (HH:mm, 24h)</span>

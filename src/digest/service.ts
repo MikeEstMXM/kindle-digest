@@ -5,6 +5,7 @@ import { resolveSettings, assertDeliverable } from '../app/settings.js';
 import { loadFontBuffers } from '../cover/fontLoader.js';
 import { buildFolderDigest, type BuiltDigest } from './orchestrator.js';
 import { createTransport, sendEpub } from '../mail/transport.js';
+import { publishIssue } from '../mobi/publish.js';
 
 export type { BuiltDigest };
 
@@ -82,6 +83,27 @@ export async function buildAllEpubs(
     if (built) results.push(built);
   }
   return results;
+}
+
+/**
+ * Download mode: convert an already-built EPUB to a periodical MOBI and put it
+ * on the Kindle page. Never touches SMTP.
+ */
+export async function publishBuiltDigest(
+  ctx: AppContext,
+  folder: string,
+  isoDate: string,
+  epubPath: string,
+): Promise<{ mobiPath: string; bytes: number }> {
+  return publishIssue({
+    epubPath,
+    folder,
+    isoDate,
+    kindleDir: ctx.env.kindleDir,
+    keepIssues: ctx.env.kindleKeepIssues,
+    ebookConvertBin: ctx.env.ebookConvertBin,
+    timeoutMs: ctx.env.convertTimeoutMs,
+  });
 }
 
 /**

@@ -2,7 +2,16 @@ import type { Env } from '../config/env.js';
 import type { SettingsRepo } from '../db/repositories.js';
 import type { SmtpConfig } from '../mail/transport.js';
 
+export type DeliveryMode = 'download' | 'email';
+
+/** Anything unrecognised means the safe default: no email. */
+export function parseDeliveryMode(value: string | undefined): DeliveryMode {
+  return value === 'email' ? 'email' : 'download';
+}
+
 export interface EffectiveSettings {
+  /** download = publish to the Kindle page; email = send via SMTP. */
+  deliveryMode: DeliveryMode;
   kindleEmail?: string;
   deliveryTime: string;
   timezone: string;
@@ -13,6 +22,7 @@ export interface EffectiveSettings {
 export function resolveSettings(env: Env, repo: SettingsRepo): EffectiveSettings {
   const s = repo.all();
   return {
+    deliveryMode: parseDeliveryMode(s.deliveryMode ?? env.defaults.deliveryMode),
     kindleEmail: s.kindleEmail ?? env.defaults.kindleEmail,
     deliveryTime: s.deliveryTime ?? env.defaults.deliveryTime,
     timezone: s.timezone ?? env.defaults.timezone,

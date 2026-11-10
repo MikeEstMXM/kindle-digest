@@ -1,0 +1,89 @@
+import { mkdir, mkdtemp, readdir, rename, rm, stat, unlink } from 'node:fs/promises';
+import { join } from 'node:path';
+import { safeFolderName } from '../util/folderName.js';
+import { PermanentConversionError, runEbookConvert, writePeriodicalEpub } from './convert.js';
+import { periodicalProblems, readMobiExth } from './exth.js';
+
+export interface PublishOptions {
+  /** The EPUB the app built (left untouched). */
+  epubPath: string;
+  folder: string;
+  isoDate: string;
+  /** Root of the Kindle page's files: <kindleDir>/<folder-slug>/<slug>-<date>.mobi */
+  kindleDir: string;
+  keepIssues: number;
+  ebookConvertBin: string;
+  timeoutMs: number;
+}
+
+export interface PublishedIssue {
+  mobiPath: string;
+  bytes: number;
+}
+
+/** `<slug>-YYYY-MM-DD.mobi` — the only filenames the Kindle page will ever list or serve. */
+export const ISSUE_FILE = /^([a-z0-9-]+)-(\d{4}-\d{2}-\d{2})\.mobi$/;
+
+/**
+ * Convert one built EPUB into a periodical MOBI and put it where the Kindle
+ * page serves it, then prune old issues. The file appears atomically (rename
+ * from a work dir on the same volume) so the Kindle never downloads a
+ * half-written issue, and a MOBI that is not a proper periodical is rejected
+ * rather than published.
+ */
+export async function publishIssue(opts: PublishOptions): Promise<PublishedIssue> {
+  const slug = safeFolderName(opts.folder);
+  const folderDir = join(opts.kindleDir, slug);
+  const finalPath = join(folderDir, `${slug}-${opts.isoDate}.mobi`);
+  await mkdir(folderDir, { recursive: true });
+
+  // Dot-prefixed, so the Kindle page can never list it.
+  const workRoot = join(opts.kindleDir, '.work');
+  await mkdir(workRoot, { recursive: true });
+  const work = await mkdtemp(join(workRoot, `${slug}-`));
+  try {
+    const convEpub = join(work, 'in.epub');
+    const outMobi = join(work, 'out.mobi');
+    await writePeriodicalEpub(opts.epubPath, convEpub, opts.folder);
+    await runEbookConvert(convEpub, outMobi, {
+      bin: opts.ebookConvertBin,
+      timeoutMs: opts.timeoutMs,
+    });
+
+    const problems = periodicalProblems(await readMobiExth(outMobi));
+    if (problems.length > 0) {
+      throw new PermanentConversionError(`not a Kindle periodical: ${problems.join('; ')}`);
+    }
+
+    await rename(outMobi, finalPath);
+  } finally {
+    await rm(work, { recursive: true, force: true });
+  }
+
+  const bytes = (await stat(finalPath)).size;
+  await pruneIssues(folderDir, slug, opts.keepIssues);
+  return { mobiPath: finalPath, bytes };
+}
+
+/** Remove conversion leftovers from a previous process that was killed mid-run. */
+export async function clearWorkDir(kindleDir: string): Promise<void> {
+  await rm(join(kindleDir, '.work'), { recursive: true, force: true });
+}
+
+/** Delete all but the newest `keep` issues of one folder. */
+export async function pruneIssues(
+  folderDir: string,
+  slug: string,
+  keep: number,
+): Promise<string[]> {
+  const issues = (await readdir(folderDir))
+    .map((name) => ISSUE_FILE.exec(name))
+    .filter((m): m is RegExpExecArray => m !== null && m[1] === slug)
+    .sort((a, b) => b[2].localeCompare(a[2]));
+  const removed: string[] = [];
+  for (const m of issues.slice(Math.max(1, keep))) {
+    await unlink(join(folderDir, m[0]));
+    removed.push(m[0]);
+  }
+  return removed;
+}

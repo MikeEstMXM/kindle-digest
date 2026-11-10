@@ -1,3 +1,4 @@
+import { safeFolderName } from '../util/folderName.js';
 import { DateTime } from 'luxon';
 import { join } from 'node:path';
 import { mkdir, writeFile, rm } from 'node:fs/promises';
@@ -244,7 +245,7 @@ async function buildFolderDigestInner(
   // Images are written here as they are produced and streamed into the zip at
   // the end. Keeping them as Buffers made peak memory grow with article count
   // (~0.75 MB/article measured), which is what broke long digests.
-  const safeFolder = folder.replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+  const safeFolder = safeFolderName(folder);
   const stagingDir = join(opts.outDir, `.staging-${safeFolder}-${opts.isoDate}`);
   await mkdir(stagingDir, { recursive: true });
   const stage = async (href: string, data: Buffer): Promise<string> => {

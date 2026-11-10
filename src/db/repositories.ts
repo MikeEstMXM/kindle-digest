@@ -4,6 +4,7 @@ import { encrypt, decrypt } from '../config/crypto.js';
 // ─── Settings ───────────────────────────────────────────────────────────────
 
 export interface AppSettings {
+  deliveryMode?: string; // 'download' | 'email'
   kindleEmail?: string;
   deliveryTime?: string; // HH:mm
   timezone?: string;
@@ -263,6 +264,7 @@ export type DeliveryState =
   | 'built'
   | 'sending'
   | 'sent'
+  | 'published'
   | 'failed'
   | 'skipped';
 
@@ -277,6 +279,8 @@ export interface DeliveryRow {
   epub_bytes: number | null;
   article_count: number | null;
   message_id: string | null;
+  /** The published .mobi on the Kindle page (download mode). */
+  mobi_path: string | null;
   last_error: string | null;
   claimed_at: number | null;
   alerted_at: number | null;
@@ -372,6 +376,17 @@ export class DeliveryRepo {
       .run(messageId, now, id);
   }
 
+  /** Download mode: the periodical MOBI is on the Kindle page. Terminal, like `sent`. */
+  markPublished(id: number, mobiPath: string): void {
+    this.db
+      .prepare(
+        `UPDATE delivery
+         SET state = 'published', mobi_path = ?, claimed_at = NULL, last_error = NULL, updated_at = ?
+         WHERE id = ?`,
+      )
+      .run(mobiPath, Date.now(), id);
+  }
+
   /** Nothing to deliver (no included articles). Terminal, but not a failure. */
   markSkipped(id: number, reason: string): void {
     const now = Date.now();
@@ -451,7 +466,7 @@ export class DeliveryRepo {
     return this.db
       .prepare(
         `SELECT * FROM delivery
-         WHERE epub_path IS NOT NULL AND digest_date < ? AND state IN ('sent', 'skipped', 'failed')`,
+         WHERE epub_path IS NOT NULL AND digest_date < ? AND state IN ('sent', 'published', 'skipped', 'failed')`,
       )
       .all(beforeDate) as DeliveryRow[];
   }
