@@ -29,12 +29,17 @@ export interface Env {
   deliveryMaxAttempts: number;
   /** Articles extracted/rendered in parallel during a build. */
   buildConcurrency: number;
-  /** Port of the separate, login-free Kindle page. 0 disables it. */
-  kindlePort: number;
-  /** Where published .mobi issues live; this is all the Kindle page can see. */
+  /** Where published .mobi issues live; served (behind login) at /issues. */
   kindleDir: string;
-  /** Issues kept per folder on the Kindle page. */
+  /** Issues kept per folder. 0 (the default) keeps every issue. */
   kindleKeepIssues: number;
+  /**
+   * Key for the signed one-time tokens on the login/setup forms. Optional: when
+   * unset a random one is made at startup (an open login page then needs a
+   * reload after a restart). Sessions and CSRF tokens for logged-in pages are
+   * random values in the database and do not use it.
+   */
+  sessionSecret?: string;
   /** calibre's CLI converter. */
   ebookConvertBin: string;
   /** Kill a conversion after this long. */
@@ -78,9 +83,9 @@ export function loadEnv(): Env {
     alertEmail: process.env.ALERT_EMAIL ?? process.env.SMTP_FROM,
     deliveryMaxAttempts: Number(process.env.DELIVERY_MAX_ATTEMPTS ?? 5),
     buildConcurrency: Number(process.env.BUILD_CONCURRENCY ?? DEFAULT_BUILD_CONCURRENCY),
-    kindlePort: intEnv('KINDLE_PORT', 3100, 0),
     kindleDir: process.env.KINDLE_DIR ?? './data/kindle',
-    kindleKeepIssues: intEnv('KINDLE_KEEP_ISSUES', 7, 1),
+    kindleKeepIssues: intEnv('KINDLE_KEEP_ISSUES', 0, 0),
+    sessionSecret: process.env.SESSION_SECRET || undefined,
     ebookConvertBin: process.env.EBOOK_CONVERT_BIN ?? 'ebook-convert',
     convertTimeoutMs: intEnv('CONVERT_TIMEOUT_MS', 20 * 60 * 1000, 1000),
   };

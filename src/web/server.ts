@@ -1,7 +1,11 @@
 import { createRequire } from 'node:module';
 import { readFileSync, createReadStream } from 'node:fs';
 import { DateTime } from 'luxon';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, {
+  type FastifyInstance,
+  type FastifyRequest,
+  type FastifyServerOptions,
+} from 'fastify';
 import formbody from '@fastify/formbody';
 import multipart from '@fastify/multipart';
 import type { AppContext } from '../app/context.js';
@@ -29,6 +33,8 @@ import {
   type DashboardFolder,
 } from './views.js';
 import type { TemplateId } from '../cover/hash.js';
+import { registerAuth, type AuthOptions } from '../auth/index.js';
+import { registerIssueRoutes } from '../issues/routes.js';
 
 const require = createRequire(import.meta.url);
 const HTMX_JS = readFileSync(require.resolve('htmx.org/dist/htmx.min.js'), 'utf8');
@@ -47,10 +53,26 @@ const COMMON_TIMEZONES = [
   'UTC',
 ];
 
-export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): FastifyInstance {
-  const app = Fastify({ logger: true });
+export function buildServer(
+  ctx: AppContext,
+  scheduler?: DailyScheduler,
+  opts: { auth?: AuthOptions; logger?: FastifyServerOptions['logger'] } = {},
+): FastifyInstance {
+  // Folder slugs are up to ~70 chars; Fastify's default param limit is 100.
+  const app = Fastify({
+    logger: opts.logger ?? true,
+    routerOptions: { maxParamLength: 300 },
+  });
   app.register(formbody);
   app.register(multipart, { limits: { fileSize: 2 * 1024 * 1024 } }); // 2 MB
+
+  // Login, CSRF and the gate that puts every route below behind a session.
+  // This must come before any route is added.
+  registerAuth(app, ctx, opts.auth);
+
+  /** A full dashboard-style page, carrying the signed-in session's CSRF token. */
+  const page = (req: FastifyRequest, title: string, body: string): string =>
+    layout(title, body, req.session!.csrf);
 
   app.get('/vendor/htmx.min.js', async (_req, reply) => {
     reply.header('Content-Type', 'application/javascript').send(HTMX_JS);
@@ -66,7 +88,7 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
     const folders = ctx.feeds.folders();
     const deliveries = ctx.delivery.recent(8);
     if (folders.length === 0) {
-      return reply.type('text/html').send(layout('Dashboard', noFeedsPrompt()));
+      return reply.type('text/html').send(page(req, 'Dashboard', noFeedsPrompt()));
     }
     try {
       const client = ctx.readerClient();
@@ -94,10 +116,12 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
       }
       return reply
         .type('text/html')
-        .send(layout('Dashboard', deliveryPanel(deliveries, settings.timezone) + dashboard(viewDate, view)));
+        .send(
+          page(req, 'Dashboard', deliveryPanel(deliveries, settings.timezone) + dashboard(viewDate, view)),
+        );
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      return reply.type('text/html').send(layout('Dashboard', noFeedsPrompt(msg)));
+      return reply.type('text/html').send(page(req, 'Dashboard', noFeedsPrompt(msg)));
     }
   });
 
@@ -212,10 +236,10 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
   });
 
   // ─── Feed management ────────────────────────────────────────────────────
-  app.get('/feeds', async (_req, reply) => {
+  app.get('/feeds', async (req, reply) => {
     const allFeeds = ctx.feeds.all();
     const fsMap = ctx.folderSettings.allAsMap();
-    return reply.type('text/html').send(layout('Feeds', feedsPage(allFeeds, fsMap)));
+    return reply.type('text/html').send(page(req, 'Feeds', feedsPage(allFeeds, fsMap)));
   });
 
   app.post('/feeds/add', async (req, reply) => {
@@ -309,10 +333,13 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
   });
 
   // ─── Settings ───────────────────────────────────────────────────────────
-  app.get('/settings', async (_req, reply) => {
+  app.get('/settings', async (req, reply) => {
     const s = resolveSettings(ctx.env, ctx.settings);
     const tzs = [...new Set([s.timezone, ...COMMON_TIMEZONES])];
-    return reply.type('text/html').send(layout('Settings', settingsPage(s, tzs)));
+    const pw = (req.query as Record<string, unknown>).pw;
+    return reply
+      .type('text/html')
+      .send(page(req, 'Settings', settingsPage(s, tzs, typeof pw === 'string' ? pw : undefined)));
   });
 
   app.post('/settings', async (req, reply) => {
@@ -334,6 +361,8 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
     scheduler?.start();
     return reply.redirect('/settings');
   });
+
+  registerIssueRoutes(app, ctx);
 
   return app;
 }
