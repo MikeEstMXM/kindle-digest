@@ -76,7 +76,7 @@ export function makeApp(env: Env = testEnv()): TestApp {
   const clock = { now: Date.now() };
   const app = buildServer(ctx, undefined, {
     auth: { cost: FAST_COST, now: () => clock.now },
-    logger: { level: 'info', stream: { write: (line: string) => void logs.push(line) } },
+    logStream: { write: (line: string) => void logs.push(line) },
   });
   return { app, ctx, db, logs, clock };
 }

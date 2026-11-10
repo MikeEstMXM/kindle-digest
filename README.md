@@ -54,6 +54,18 @@ Access needed). There is one account, **`mharm`**; there is no sign-up page.
   `sqlite3 <database file> "UPDATE users SET password_hash = NULL WHERE username = 'mharm'; DELETE FROM sessions;"`.
   Do this only while Cloudflare Access is on, for the same reason as above.
 
+> **Deploying this behind Cloudflare:** the container must be reachable *only*
+> through the tunnel (bind its port to `127.0.0.1`, never `0.0.0.0` or a LAN
+> address). The rate limit trusts the `CF-Connecting-IP` header, which anyone could
+> forge if they could reach the port directly. The old port-3100 mapping is gone —
+> remove it from any compose file.
+>
+> **Upgrading from the pre-login version:** the first start migrates the database
+> (adds the `mharm` account and per-user ownership) and the old image cannot use it
+> afterwards. Stop the old container and copy the SQLite file together with its
+> `-wal` and `-shm` files before the first deploy; rolling back means the old image
+> plus that copy.
+
 ### The issue archive
 
 **Issues** in the top bar (`/issues`) lists each folder with its latest issue and

@@ -156,12 +156,12 @@ export function migrate(db: DB): void {
     );
     CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires_at);
 
-    -- Failed password attempts; drives the login rate limit.
+    -- Password attempts (a correct one clears its address's rows); drives the
+    -- login rate limit. ip is the rate-limit key: an IPv4 address or an IPv6 /64.
     CREATE TABLE IF NOT EXISTS login_failures (
-      id       INTEGER PRIMARY KEY AUTOINCREMENT,
-      ip       TEXT NOT NULL,
-      username TEXT,
-      at       INTEGER NOT NULL
+      id  INTEGER PRIMARY KEY AUTOINCREMENT,
+      ip  TEXT NOT NULL,
+      at  INTEGER NOT NULL
     );
     CREATE INDEX IF NOT EXISTS login_failures_ip_at ON login_failures(ip, at);
 
@@ -345,10 +345,13 @@ function adoptOwner(db: DB): void {
         // AUTOINCREMENT remembers the highest id ever used, deleted rows
         // included; keep that so an id is never handed out twice.
         if (seq) {
-          db.prepare('UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = ?').run(
-            seq.seq,
-            table,
-          );
+          // A table with no rows yet has no counter row to raise; make one.
+          const raised = db
+            .prepare('UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = ?')
+            .run(seq.seq, table);
+          if (raised.changes === 0) {
+            db.prepare('INSERT INTO sqlite_sequence (name, seq) VALUES (?, ?)').run(table, seq.seq);
+          }
         }
       }
       const danglingAfter = (db.pragma('foreign_key_check') as unknown[]).length;

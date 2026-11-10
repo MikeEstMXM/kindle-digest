@@ -68,15 +68,25 @@ any POST form without one. Login/setup have no session yet, so they use a signed
 expiring (2 h) token (HMAC with `SESSION_SECRET`, or a random per-process key
 when unset). That stops cross-site login CSRF; it is not bound to the visitor.
 
-**Rate limit.** 5 failed attempts per 15 minutes per address, stored in
-`login_failures` (survives restarts), checked *before* the password so a correct
-guess during lockout still fails. The address is `CF-Connecting-IP` when it is a
-valid IP, else the socket address. That header is only trustworthy because the
-container is reachable solely through the Cloudflare tunnel; if the port were ever
-exposed directly, anyone could spoof it. A wrong *current* password on the
+**Rate limit.** 5 attempts per 15 minutes per address, kept in `login_failures`
+(survives restarts). Each attempt is written down *before* the slow password hash
+runs and wiped again if the password is right, so a burst of parallel guesses
+cannot all slip through while the first is still hashing (a reviewer measured 40
+of 40 getting through with record-after-failure; now exactly 5). It is checked
+before the password, so a correct guess during lockout still fails. IPv6 is
+counted per /64, because one visitor owns a whole /64 and could otherwise rotate
+addresses. The address is `CF-Connecting-IP` when it is a valid IP, else the
+socket address; that header is only trustworthy because the container is
+reachable solely through the Cloudflare tunnel. **If the port were ever published
+on the LAN or the internet directly, anyone could spoof the header and the limit
+would mean nothing** (deploy note in README). A wrong *current* password on the
 Settings page counts too. An unknown username does the same hashing work as a
-wrong password. Failures are logged with address and username (never the
-password).
+wrong password (the dummy hash is made at startup so even the first miss is not
+slower). Failures are logged with the address and whether the username matched —
+not the username (on a Kindle keyboard people type the password into it) and
+never the password. No global cap across all addresses: it would let anyone with
+a few requests an hour lock the owner out of new sign-ins, which is worse than the
+risk it covers given a 12+ character password and a ~200 ms hash.
 
 **Issue archive.** `issues` table = index of the `.mobi` files (slug, real folder
 name, date, size, owner); `/issues`, `/issues/<folder>`, `/issues/<folder>/<file>`
@@ -93,6 +103,28 @@ are plain HTML, no JS, large tap targets.
 - *Retention:* `KINDLE_KEEP_ISSUES` unset or `0` keeps everything (the new
   default; it was 7). A typo also means "keep everything", never "delete".
   `pruneIssues` still clamps to at least 1 and is only called when a limit is set.
+
+**Review.** A fresh reviewer tried to break it (gate bypass by URL/method tricks,
+CSRF, open redirect, fixation, rate-limit races, path traversal, malformed MOBI,
+XSS, migration). Fixed from that: a `?next=` with a non-ASCII or DEL character
+crashed the whole process when redirected to (now only printable ASCII paths are
+accepted); the parallel-guess race and IPv6 rotation above; malformed MOBI
+headers now mean "no thumbnail" rather than a 500; downloads open with
+`O_NOFOLLOW`; the AUTOINCREMENT counter is kept for a table that is empty at
+migration time; the failure log no longer stores the typed username; the
+`?_csrf=` token of an upload is scrubbed from the request log. Known and
+accepted: `/setup` is open to whoever gets there first (hence "keep Cloudflare
+Access on until the password is set"); the session cookie is not `__Host-`
+prefixed (a sibling subdomain could shadow it, which at worst logs you out — a new
+session id is issued on every login); no CSP/HSTS (the dashboard uses inline
+handlers; set HSTS in Cloudflare); `/download*` are GETs that build an EPUB, so a
+cross-site link can make the server do work (needs a signed-in visitor, no data
+leaves); the login form token is not bound to the visitor.
+
+**Upgrading a running instance.** The ownership migration cannot be undone by the
+old image (its INSERTs do not know `user_id`). Before the first deploy: stop the
+old container, copy the SQLite file *with* its `-wal` and `-shm` files, deploy.
+Rolling back = old image + that copy.
 
 **Removed:** the second Fastify listener on 3100 (`src/kindle/server.ts`,
 `KINDLE_PORT`, the Dockerfile `EXPOSE 3100`). Its safeguards moved to the

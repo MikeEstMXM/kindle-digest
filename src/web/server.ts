@@ -1,11 +1,7 @@
 import { createRequire } from 'node:module';
 import { readFileSync, createReadStream } from 'node:fs';
 import { DateTime } from 'luxon';
-import Fastify, {
-  type FastifyInstance,
-  type FastifyRequest,
-  type FastifyServerOptions,
-} from 'fastify';
+import Fastify, { type FastifyInstance, type FastifyRequest } from 'fastify';
 import formbody from '@fastify/formbody';
 import multipart from '@fastify/multipart';
 import type { AppContext } from '../app/context.js';
@@ -53,14 +49,32 @@ const COMMON_TIMEZONES = [
   'UTC',
 ];
 
+/** A request URL that is safe to log: the CSRF token is a secret of the session it belongs to. */
+export function scrubUrl(url: string): string {
+  return url.replace(/([?&]_csrf=)[^&]*/g, '$1[token]');
+}
+
 export function buildServer(
   ctx: AppContext,
   scheduler?: DailyScheduler,
-  opts: { auth?: AuthOptions; logger?: FastifyServerOptions['logger'] } = {},
+  opts: { auth?: AuthOptions; logStream?: { write(line: string): void } } = {},
 ): FastifyInstance {
-  // Folder slugs are up to ~70 chars; Fastify's default param limit is 100.
   const app = Fastify({
-    logger: opts.logger ?? true,
+    logger: {
+      level: 'info',
+      ...(opts.logStream ? { stream: opts.logStream } : {}),
+      serializers: {
+        // Fastify's usual request line, minus the CSRF token an upload carries in its URL.
+        req: (req: FastifyRequest) => ({
+          method: req.method,
+          url: scrubUrl(req.url),
+          host: req.headers.host,
+          remoteAddress: req.ip,
+          remotePort: req.socket?.remotePort,
+        }),
+      },
+    },
+    // Folder slugs are up to ~70 chars; Fastify's default param limit is 100.
     routerOptions: { maxParamLength: 300 },
   });
   app.register(formbody);

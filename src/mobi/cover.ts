@@ -70,14 +70,14 @@ export async function readMobiCover(path: string): Promise<Buffer | undefined> {
 
 /** The cover as a small JPEG for the archive list; undefined if there is none. */
 export async function mobiThumbnail(path: string, width = 120): Promise<Buffer | undefined> {
-  const cover = await readMobiCover(path);
-  if (!cover) return undefined;
   try {
+    const cover = await readMobiCover(path);
+    if (!cover) return undefined;
     return await sharp(cover)
       .resize({ width, withoutEnlargement: true })
       .jpeg({ quality: 70 })
       .toBuffer();
   } catch {
-    return undefined; // not an image we can decode
+    return undefined; // a damaged .mobi, or an image we cannot decode: no thumbnail
   }
 }

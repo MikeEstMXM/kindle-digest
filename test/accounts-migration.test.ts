@@ -291,6 +291,16 @@ describe('accounts migration on a copy of a live-shaped database', () => {
     expect(new FeedRepo(db).add('https://new.example/feed', 'New', 'News').id).toBeGreaterThan(500);
   });
 
+  it('keeps the id counter even when the table is empty now', () => {
+    const db = liveShapedDb();
+    db.prepare('DELETE FROM delivery').run();
+    db.prepare("UPDATE sqlite_sequence SET seq = 77 WHERE name = 'delivery'").run();
+    migrate(db);
+    const d = new DeliveryRepo(db);
+    d.enqueue('2026-11-10', 'News');
+    expect(d.find('2026-11-10', 'News')!.id).toBe(78);
+  });
+
   it('is idempotent: a second run (every restart) changes nothing', () => {
     const db = liveShapedDb();
     migrate(db);

@@ -118,10 +118,9 @@ export class AuthRepo {
 
   // ─── Failed logins ───────────────────────────────────────────────────────
 
-  recordFailure(ip: string, username: string, now: number = Date.now()): void {
-    this.db
-      .prepare('INSERT INTO login_failures (ip, username, at) VALUES (?, ?, ?)')
-      .run(ip, username.slice(0, 64), now);
+  /** `key` is the rate-limit key for an address (see rateKey), not necessarily the raw IP. */
+  recordFailure(key: string, now: number = Date.now()): void {
+    this.db.prepare('INSERT INTO login_failures (ip, at) VALUES (?, ?)').run(key, now);
   }
 
   /** Failures from this address since `since`, and when the oldest of them was. */

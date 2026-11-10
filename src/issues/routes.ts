@@ -1,4 +1,5 @@
-import { open, type FileHandle } from 'node:fs/promises';
+import { constants } from 'node:fs';
+import { open } from 'node:fs/promises';
 import type { FastifyInstance } from 'fastify';
 import type { AppContext } from '../app/context.js';
 import { mobiThumbnail } from '../mobi/cover.js';
@@ -44,15 +45,20 @@ export function registerIssueRoutes(app: FastifyInstance, ctx: AppContext): void
     const { slug, file } = req.params as { slug: string; file: string };
     const hit = await locate(slug, file);
     if (!hit) return notFound(reply);
-    // Size comes from the open handle, which also survives the file being
-    // replaced mid-download.
-    let fh: FileHandle;
+    // O_NOFOLLOW: even if the file were swapped for a symlink after the check
+    // above, opening it fails. The size comes from the open handle, which also
+    // survives the file being replaced mid-download.
+    const fh = await open(hit.path, constants.O_RDONLY | constants.O_NOFOLLOW).catch(
+      () => undefined,
+    );
+    if (!fh) return notFound(reply);
+    let size: number;
     try {
-      fh = await open(hit.path, 'r');
+      size = (await fh.stat()).size;
     } catch {
+      await fh.close().catch(() => undefined);
       return notFound(reply);
     }
-    const { size } = await fh.stat();
     reply
       .header('Content-Type', MOBI_TYPE)
       .header('Content-Length', size)

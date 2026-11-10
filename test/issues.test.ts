@@ -205,6 +205,50 @@ describe('issue archive: cover thumbnails', () => {
     await rm(join(fx.kindleDir, 'cov'), { recursive: true, force: true });
   });
 
+  it('a damaged .mobi gives no thumbnail (404), never a server error', async () => {
+    const cover = await sharp({
+      create: { width: 60, height: 80, channels: 3, background: '#333' },
+    })
+      .jpeg()
+      .toBuffer();
+    const good = buildMobi({ title: 'Bad', cover });
+    const exthAt = good.indexOf('EXTH');
+    const damaged: Record<string, Buffer> = {
+      // header record ends right after the EXTH magic
+      'cut-in-exth': Buffer.concat([
+        (() => {
+          const b = Buffer.from(good.subarray(0, 90));
+          b.writeUInt32BE(exthAt + 4, 86);
+          return b;
+        })(),
+        good.subarray(90),
+      ]),
+      truncated: good.subarray(0, 120),
+      'cover-index-huge': (() => {
+        const b = Buffer.from(good);
+        b.writeUInt32BE(0xfffffff0, b.indexOf(Buffer.from([0, 0, 0, 201])) + 8);
+        return b;
+      })(),
+    };
+    await mkdir(join(fx.kindleDir, 'dmg'), { recursive: true });
+    for (const [name, data] of Object.entries(damaged)) {
+      await writeFile(
+        join(
+          fx.kindleDir,
+          'dmg',
+          `dmg-2026-11-${name === 'truncated' ? '01' : name === 'cut-in-exth' ? '02' : '03'}.mobi`,
+        ),
+        data,
+      );
+    }
+    await syncIssues(t.ctx.issues, fx.kindleDir, []);
+    for (const day of ['01', '02', '03']) {
+      const res = await s.get(`/issues/dmg/dmg-2026-11-${day}.mobi/cover.jpg`);
+      expect(res.statusCode, day).toBe(404);
+    }
+    await rm(join(fx.kindleDir, 'dmg'), { recursive: true, force: true });
+  });
+
   it('is a 404 when the file has no usable cover', async () => {
     const res = await s.get('/issues/news/news-2026-11-10.mobi/cover.jpg'); // fixture is not a real MOBI
     expect(res.statusCode).toBe(404);

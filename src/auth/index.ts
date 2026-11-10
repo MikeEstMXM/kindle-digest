@@ -1,5 +1,4 @@
 import { createHmac, randomBytes, timingSafeEqual, createHash } from 'node:crypto';
-import { isIP } from 'node:net';
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
 import type { AppContext } from '../app/context.js';
 import {
@@ -10,6 +9,7 @@ import {
   verifyPassword,
   type ScryptCost,
 } from './password.js';
+import { clientIp, rateKey } from './ip.js';
 import { AuthRepo } from './store.js';
 import { loginPage, setupPage } from './views.js';
 
@@ -55,13 +55,6 @@ export interface AuthOptions {
 
 const str = (v: unknown): string => (typeof v === 'string' ? v : '');
 
-/** Where this request really came from: Cloudflare's header if it is a valid IP, else the socket. */
-export function clientIp(req: FastifyRequest): string {
-  const cf = req.headers['cf-connecting-ip'];
-  if (typeof cf === 'string' && isIP(cf.trim())) return cf.trim();
-  return req.socket.remoteAddress ?? 'unknown';
-}
-
 function parseCookies(header: string | undefined): Record<string, string> {
   const out: Record<string, string> = {};
   for (const part of (header ?? '').split(';')) {
@@ -80,8 +73,9 @@ function cookieHeader(value: string, maxAgeSec: number): string {
 /** Only same-site paths: never an absolute URL (open redirect) or the auth pages themselves. */
 export function safeNext(raw: unknown): string {
   const next = str(raw);
-  if (!next.startsWith('/') || next.startsWith('//') || next.includes('\\')) return '/';
-  for (let i = 0; i < next.length; i++) if (next.charCodeAt(i) < 0x20) return '/';
+  // Printable ASCII only: anything else (control characters, DEL, non-Latin-1)
+  // is not a valid header value and would crash the response when redirected to.
+  if (!/^\/[\x21-\x7e]*$/.test(next) || next.startsWith('//') || next.includes('\\')) return '/';
   return PUBLIC_PATHS.has(next.split('?')[0]) ? '/' : next;
 }
 
@@ -119,9 +113,9 @@ export function registerAuth(
   };
 
   // A hash to spend the same time on when there is nothing to check against, so
-  // an unknown username and a wrong password cost the same.
-  let dummyHash: Promise<string> | undefined;
-  const dummy = (): Promise<string> => (dummyHash ??= hashPassword('not-a-real-password', cost));
+  // an unknown username and a wrong password cost the same. Made now, not on the
+  // first miss, or that first miss would be measurably slower.
+  const dummyHash = hashPassword('not-a-real-password', cost);
 
   // ─── The gate ──────────────────────────────────────────────────────────
   app.decorateRequest('session', null);
@@ -183,14 +177,26 @@ export function registerAuth(
 
   // ─── Rate limit ────────────────────────────────────────────────────────
   /** Milliseconds until this address may try again, or 0 if it may try now. */
-  const lockedOutFor = (ip: string): number => {
-    const { count, oldest } = repo.failuresSince(ip, now() - LOGIN_WINDOW_MS);
+  const lockedOutFor = (key: string): number => {
+    const { count, oldest } = repo.failuresSince(key, now() - LOGIN_WINDOW_MS);
     return count >= MAX_LOGIN_FAILURES && oldest !== null ? oldest + LOGIN_WINDOW_MS - now() : 0;
   };
-  const failed = (req: FastifyRequest, what: string, username: string): void => {
-    const ip = clientIp(req);
-    repo.recordFailure(ip, username, now());
-    req.log.warn({ ip, username: username.slice(0, 64), what }, 'failed login attempt');
+  /**
+   * Take one of this address's attempts, *before* the (slow) password check. If
+   * the attempt were only recorded after a wrong answer, a burst of parallel
+   * guesses would all pass the check while the first was still hashing. Returns
+   * the wait in ms when over the limit, else 0 and the attempt is on the books;
+   * a correct password clears the address's count again.
+   */
+  const takeAttempt = (ip: string): number => {
+    const key = rateKey(ip);
+    repo.purgeFailuresBefore(now() - LOGIN_WINDOW_MS);
+    const wait = lockedOutFor(key);
+    if (wait === 0) repo.recordFailure(key, now());
+    return wait;
+  };
+  const logFailure = (req: FastifyRequest, what: string, userKnown: boolean): void => {
+    req.log.warn({ ip: clientIp(req), what, userKnown }, 'failed login attempt');
   };
   const housekeeping = (): void => {
     repo.purgeExpiredSessions(now());
@@ -251,7 +257,7 @@ export function registerAuth(
       return showError(403, 'This page expired. Please try again.');
     }
     const ip = clientIp(req);
-    const wait = lockedOutFor(ip);
+    const wait = takeAttempt(ip);
     if (wait > 0) {
       req.log.warn({ ip }, 'login refused: too many failures');
       return tooMany(reply, wait);
@@ -263,9 +269,9 @@ export function registerAuth(
     const ok =
       password.length > 0 && password.length <= 1024 && user?.passwordHash
         ? await verifyPassword(password, user.passwordHash)
-        : (await verifyPassword(password.slice(0, 1024), await dummy()), false);
+        : (await verifyPassword(password.slice(0, 1024), await dummyHash), false);
     if (!ok || !user || user.id !== ctx.userId) {
-      failed(req, user ? 'wrong password' : 'unknown user', username);
+      logFailure(req, user ? 'wrong password' : 'unknown user', !!user);
       return showError(401, 'Wrong username or password.');
     }
 
@@ -284,7 +290,7 @@ export function registerAuth(
       ip,
       userAgent: str(req.headers['user-agent']),
     });
-    repo.clearFailures(ip);
+    repo.clearFailures(rateKey(ip));
     housekeeping();
     req.log.info({ ip, remember }, 'login ok');
     return reply
@@ -326,12 +332,13 @@ export function registerAuth(
     const b = (req.body ?? {}) as Record<string, unknown>;
     const back = (code: string): FastifyReply => reply.redirect(`/settings?pw=${code}#password`);
     const ip = clientIp(req);
-    if (lockedOutFor(ip) > 0) return back('limited');
+    if (takeAttempt(ip) > 0) return back('limited');
     const user = owner();
     if (!user?.passwordHash || !(await verifyPassword(str(b.current), user.passwordHash))) {
-      failed(req, 'wrong current password', user?.username ?? '');
+      logFailure(req, 'wrong current password', !!user);
       return back('wrong');
     }
+    repo.clearFailures(rateKey(ip));
     const problem = passwordProblem(str(b.password), str(b.confirm));
     if (problem) return back(problem);
     repo.changePassword(user.id, await hashPassword(str(b.password), cost));

@@ -14,6 +14,7 @@ import {
   type TestApp,
 } from './helpers/app.js';
 import { hashPassword, verifyPassword } from '../src/auth/password.js';
+import { rateKey } from '../src/auth/ip.js';
 import {
   LOGIN_WINDOW_MS,
   MAX_LOGIN_FAILURES,
@@ -347,6 +348,25 @@ describe('/login', () => {
     expect(redirected.headers.location).toBe('/login?next=%2Fissues%2Fnews%3Fpage%3D2');
   });
 
+  it('survives a hostile ?next= (non-ASCII, DEL, control characters) instead of crashing', async () => {
+    const hostile = ['/€', '/\u007f', '/\u2028', '/a\u0000b', '/ü?x=ß', '/%E2%82%AC'];
+    for (const next of hostile) {
+      const res = await login(t, { next });
+      expect(res.statusCode, JSON.stringify(next)).toBe(302);
+      expect(res.headers.location).toMatch(/^\/[\x21-\x7e]*$/); // always a plain-ASCII path
+      if (!/%/.test(next)) expect(res.headers.location).toBe('/');
+    }
+    // The same through the signed-in GET /login?next=... path.
+    const cookie = cookieOf(await login(t))!;
+    for (const q of ['/%E2%82%AC', '/%7F', '/%E2%80%A8', '/%00']) {
+      const res = await t.app.inject({ url: `/login?next=${q}`, headers: { cookie } });
+      expect(res.statusCode).toBe(302);
+      expect(res.headers.location).toBe('/');
+    }
+    // ...and the app is still up.
+    expect((await t.app.inject('/healthz')).statusCode).toBe(200);
+  });
+
   it('replaces any session id sent in with a fresh one', async () => {
     const first = cookieOf(await login(t))!;
     const page = await t.app.inject({ url: '/login', headers: { cookie: first } });
@@ -418,6 +438,26 @@ describe('login rate limit', () => {
     expect((await login(t, { ip: 'not-an-ip' })).statusCode).toBe(429);
   });
 
+  it('holds under a burst of parallel guesses (the attempt is counted before the slow hash)', async () => {
+    const burst = await Promise.all(
+      Array.from({ length: 40 }, () =>
+        login(t, { password: 'wrong wrong wrong', ip: '203.0.113.50' }),
+      ),
+    );
+    const codes = burst.map((r) => r.statusCode);
+    expect(codes.filter((c) => c === 401)).toHaveLength(MAX_LOGIN_FAILURES);
+    expect(codes.filter((c) => c === 429)).toHaveLength(40 - MAX_LOGIN_FAILURES);
+    expect((await login(t, { ip: '203.0.113.50' })).statusCode).toBe(429);
+  });
+
+  it('counts an IPv6 visitor by /64, so rotating addresses inside it does not reset the limit', async () => {
+    for (let i = 0; i < MAX_LOGIN_FAILURES; i++) {
+      await login(t, { password: 'wrong wrong wrong', ip: `2001:db8:1:2::${i + 1}` });
+    }
+    expect((await login(t, { ip: '2001:db8:1:2:aaaa:bbbb:cccc:dddd' })).statusCode).toBe(429);
+    expect((await login(t, { ip: '2001:db8:1:3::1' })).statusCode).toBe(302); // a different /64
+  });
+
   it('lets the address try again once the window has passed', async () => {
     for (let i = 0; i < MAX_LOGIN_FAILURES; i++) await login(t, { password: 'wrong wrong wrong' });
     expect((await login(t)).statusCode).toBe(429);
@@ -437,8 +477,26 @@ describe('login rate limit', () => {
   it('logs every failure with the address, and never the password', async () => {
     await login(t, { password: 'hunter2hunter2', ip: '203.0.113.7' });
     const line = t.logs.map((l) => JSON.parse(l)).find((l) => l.msg === 'failed login attempt');
-    expect(line).toMatchObject({ ip: '203.0.113.7', username: 'mharm', what: 'wrong password' });
+    expect(line).toMatchObject({ ip: '203.0.113.7', userKnown: true, what: 'wrong password' });
     expect(t.logs.join('')).not.toContain('hunter2hunter2');
+  });
+
+  it('does not keep what was typed in the username box (it is often a password on a Kindle keyboard)', async () => {
+    const page = await t.app.inject('/login');
+    await t.app.inject({
+      method: 'POST',
+      url: '/login',
+      headers: FORM,
+      payload: form({
+        _csrf: formTokenOf(page.body),
+        username: 'typed-by-mistake-secret',
+        password: 'x',
+      }),
+    });
+    expect(t.logs.join('')).not.toContain('typed-by-mistake-secret');
+    expect(JSON.stringify(t.db.prepare('SELECT * FROM login_failures').all())).not.toContain(
+      'typed-by-mistake',
+    );
   });
 });
 
@@ -586,6 +644,20 @@ describe('change password (Settings)', () => {
   });
 });
 
+describe('request log', () => {
+  it('does not write the CSRF token of an upload URL to the log', async () => {
+    const s = await signIn(t);
+    await t.app.inject({
+      method: 'POST',
+      url: `/feeds/import?_csrf=${encodeURIComponent(s.csrf)}`,
+      headers: { cookie: s.cookie, 'content-type': 'multipart/form-data; boundary=x' },
+      payload: '--x--\r\n',
+    });
+    expect(t.logs.join('')).toContain('/feeds/import?_csrf=[token]');
+    expect(t.logs.join('')).not.toContain(s.csrf);
+  });
+});
+
 describe('response headers', () => {
   it('forbids framing, sniffing and caching of private pages', async () => {
     const s = await signIn(t);
@@ -594,4 +666,17 @@ describe('response headers', () => {
     expect(res.headers['x-content-type-options']).toBe('nosniff');
     expect(res.headers['cache-control']).toContain('no-store');
   });
+});
+
+describe('rateKey', () => {
+  it.each([
+    ['203.0.113.7', '203.0.113.7'],
+    ['::ffff:203.0.113.7', '203.0.113.7'],
+    ['2001:db8:1:2::1', 'v6:2001:0db8:0001:0002'],
+    ['2001:DB8:1:2:ffff:ffff:ffff:ffff', 'v6:2001:0db8:0001:0002'],
+    ['2001:db8::1', 'v6:2001:0db8:0000:0000'],
+    ['::1', 'v6:0000:0000:0000:0000'],
+    ['fe80::1%eth0', 'v6:fe80:0000:0000:0000'],
+    ['unknown', 'unknown'],
+  ])('%s -> %s', (ip, key) => expect(rateKey(ip)).toBe(key));
 });
