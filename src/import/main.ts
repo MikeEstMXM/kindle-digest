@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, statSync } from 'node:fs';
 import { FONTS_DIR } from '../app/context.js';
 import { configureSharp } from '../content/sharpConfig.js';
 import { loadEnv } from '../config/env.js';
@@ -20,6 +20,21 @@ async function main(): Promise<number> {
     return 1;
   }
   configureSharp();
+  // `docker exec` runs as root unless told otherwise, and files root creates
+  // under /data (a new folder directory, the database's WAL) can then not be
+  // written by the app, which runs as an unprivileged user.
+  const uid = process.getuid?.();
+  if (uid === 0) {
+    for (const path of [env.databasePath, env.kindleDir]) {
+      const owner = statSync(path, { throwIfNoEntry: false })?.uid;
+      if (owner !== undefined && owner !== 0) {
+        console.error(
+          `failed    running as root, but ${path} belongs to uid ${owner}; run as the app user (docker exec -u ${owner} …)`,
+        );
+        return 1;
+      }
+    }
+  }
   const db = openDb(env.databasePath);
   try {
     const owner = db.prepare('SELECT id FROM users WHERE username = ?').get(OWNER_USERNAME) as
