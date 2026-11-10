@@ -116,7 +116,8 @@ export function migrate(db: DB): void {
       id              INTEGER PRIMARY KEY AUTOINCREMENT,
       digest_date     TEXT NOT NULL,
       folder          TEXT NOT NULL,
-      -- pending|building|built|sending|sent|failed|skipped
+      -- pending|building|built|sending|sent|published|failed|skipped
+      -- (sent = emailed; published = MOBI is on the Kindle page)
       state           TEXT NOT NULL DEFAULT 'pending',
       attempts        INTEGER NOT NULL DEFAULT 0,
       next_attempt_at INTEGER NOT NULL,
@@ -124,6 +125,7 @@ export function migrate(db: DB): void {
       epub_bytes      INTEGER,  -- diagnostics only, nothing is keyed off this
       article_count   INTEGER,
       message_id      TEXT,     -- SMTP messageId — proof the server accepted it
+      mobi_path       TEXT,     -- published periodical MOBI (download mode)
       last_error      TEXT,
       claimed_at      INTEGER,  -- set while in building/sending; drives stale sweep
       alerted_at      INTEGER,  -- failure alert sent once, never loops
@@ -136,6 +138,12 @@ export function migrate(db: DB): void {
   `);
 
   // Idempotent column migrations for existing DBs.
+  const deliveryCols = (db.prepare('PRAGMA table_info(delivery)').all() as { name: string }[]).map(
+    (c) => c.name,
+  );
+  if (!deliveryCols.includes('mobi_path')) {
+    db.exec('ALTER TABLE delivery ADD COLUMN mobi_path TEXT');
+  }
   const cols = (db.prepare('PRAGMA table_info(folder_settings)').all() as { name: string }[]).map(
     (c) => c.name,
   );

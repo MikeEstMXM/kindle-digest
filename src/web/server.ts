@@ -5,7 +5,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import formbody from '@fastify/formbody';
 import multipart from '@fastify/multipart';
 import type { AppContext } from '../app/context.js';
-import { resolveSettings } from '../app/settings.js';
+import { resolveSettings, parseDeliveryMode } from '../app/settings.js';
 import JSZip from 'jszip';
 import {
   enqueueFolder,
@@ -20,6 +20,7 @@ import type { DailyScheduler } from '../scheduler/runner.js';
 import {
   layout,
   dashboard,
+  deliveryPanel,
   noFeedsPrompt,
   settingsPage,
   feedsPage,
@@ -63,6 +64,7 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
     const viewDate = /^\d{4}-\d{2}-\d{2}$/.test(rawDate) ? rawDate : today;
 
     const folders = ctx.feeds.folders();
+    const deliveries = ctx.delivery.recent(8);
     if (folders.length === 0) {
       return reply.type('text/html').send(layout('Dashboard', noFeedsPrompt()));
     }
@@ -90,7 +92,9 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
           })),
         });
       }
-      return reply.type('text/html').send(layout('Dashboard', dashboard(viewDate, view)));
+      return reply
+        .type('text/html')
+        .send(layout('Dashboard', deliveryPanel(deliveries, settings.timezone) + dashboard(viewDate, view)));
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
       return reply.type('text/html').send(layout('Dashboard', noFeedsPrompt(msg)));
@@ -324,6 +328,7 @@ export function buildServer(ctx: AppContext, scheduler?: DailyScheduler): Fastif
       'smtpFrom',
     ];
     for (const k of keys) if (b[k] !== undefined) ctx.settings.set(k, b[k]);
+    if (b.deliveryMode !== undefined) ctx.settings.set('deliveryMode', parseDeliveryMode(b.deliveryMode));
     if (b.smtpPass) ctx.settings.set('smtpPass', b.smtpPass);
     scheduler?.stop();
     scheduler?.start();

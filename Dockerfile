@@ -13,6 +13,26 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     python3 make g++ ca-certificates fonts-liberation libjemalloc2 \
     && rm -rf /var/lib/apt/lists/*
 
+# calibre — used only as a separate CLI process (`ebook-convert`) to turn the
+# EPUB into a Kindle periodical MOBI; never imported (keeps its GPL code out of
+# the app). The libs are what its bundled Qt needs to start headless; xz-utils
+# and wget are for the installer. The installer verifies its download against
+# calibre's published sha512 and `version=` pins the release, so a rebuild does
+# not silently pick up a newer calibre. This layer sits above the app code so
+# ordinary code changes don't re-download it.
+ARG CALIBRE_VERSION=9.18.0
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libegl1 libopengl0 libxkbcommon0 libglx0 libnss3 libxcomposite1 libxdamage1 \
+    libxrandr2 libxtst6 libxkbfile1 libfontconfig1 libgl1 libdbus-1-3 libxcb-cursor0 \
+    xz-utils wget \
+    && rm -rf /var/lib/apt/lists/* \
+    && wget -nv -O- https://download.calibre-ebook.com/linux-installer.sh \
+       | sh /dev/stdin install_dir=/opt isolated=y version=${CALIBRE_VERSION} \
+    && /opt/calibre/ebook-convert --version \
+    && rm -rf /tmp/calibre-installer-cache
+ENV PATH=/opt/calibre:$PATH \
+    QT_QPA_PLATFORM=offscreen
+
 WORKDIR /app
 
 # Install dependencies (cached on lockfile changes).
@@ -41,9 +61,13 @@ ENV NODE_ENV=production \
     PORT=3000 \
     DATABASE_PATH=/data/kindle-digest.sqlite \
     DIGEST_DIR=/data/digests \
+    KINDLE_DIR=/data/kindle \
+    KINDLE_PORT=3100 \
     LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
 
-EXPOSE 3000
+# 3000 = the app (dashboard; has no login of its own — keep it behind Access).
+# 3100 = the Kindle page: issue list + .mobi downloads only, no login, LAN use.
+EXPOSE 3000 3100
 VOLUME ["/data"]
 
 CMD ["node", "dist/index.js"]

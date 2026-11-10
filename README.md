@@ -2,16 +2,54 @@
 
 A single-user web app that turns your RSS feeds into **daily Kindle digests**.
 It manages its own feed list, lets you curate which articles go into today's
-digest, and delivers **one EPUB per folder** — with a designed cover, full
+digest, and builds **one digest per folder** — with a designed cover, full
 article text, a per-article QR code back to the source, and a diagnostics page
-— straight to your Kindle, on a schedule and on demand.
+— delivered to your Kindle on a schedule and on demand.
 
 No external RSS reader required. All feeds and read state live in a local
 SQLite database on your Fly.io volume.
 
 ---
 
-## Required setup: whitelist your sender on Amazon
+## Two ways to get a digest onto the Kindle
+
+Pick one under **Settings → Delivery mode** (or the `DELIVERY_MODE` env var for
+the first-run default).
+
+| | **Kindle page** (`download`, the default) | **Email** (`email`) |
+|---|---|---|
+| What is delivered | A Kindle *periodical* `.mobi`, one per folder per day | The EPUB, by SMTP to your `@kindle.com` address |
+| Issues stack under one title with a cover tile | **Yes** | No — Amazon turns every attachment into an ordinary document |
+| Needs SMTP | **No — never touches it** | Yes (and the whitelist step below) |
+| How it reaches the Kindle | You open the Kindle page in the Kindle's web browser and tap an issue | Amazon delivers it |
+| Needs calibre | Yes (in the Docker image) | No |
+
+### The Kindle page
+
+A second, separate web server (default port **3100**, `KINDLE_PORT`) that lists
+every folder's issues, newest first, as large tap targets. On the Kindle:
+**Experimental Browser → `http://<server-ip>:3100/`** → tap an issue → it downloads
+into the library and stacks with earlier issues of the same folder.
+
+- It serves **only** the issue list and the `.mobi` files — nothing of the
+  dashboard is reachable on that port. It has **no login** (the Kindle browser
+  can't pass Cloudflare Access), so publish that port on the **home network
+  only**, never to the internet. The main app (port 3000) has no login either,
+  so keep it behind your access gateway.
+- The last 7 issues per folder are kept (`KINDLE_KEEP_ISSUES`); older ones are
+  deleted when a new one is published.
+- Each issue is made by converting the built EPUB with
+  [calibre](https://calibre-ebook.com)'s `ebook-convert` as a separate process:
+  the OPF is switched to version 2.0 with a `periodical:magazine:<Folder>` type and
+  an OPF 2 cover, and converted with `--share-not-sync` (no ASIN, or the Kindle
+  tile shows no cover). The result is checked before it is published; an issue
+  that is not a proper periodical is rejected, not served. Details and the
+  reasons are in [`docs/decisions.md`](./docs/decisions.md).
+- A delivery is marked **published** (instead of *sent*) and shown on the
+  dashboard's *Recent deliveries* panel; a failed conversion shows there too,
+  with its error. No email is sent in this mode, including failure alerts.
+
+### Email mode: whitelist your sender on Amazon
 
 **Send to Kindle silently drops email from unknown senders.** Before anything
 will reach your device you MUST add your sending address to Amazon's approved
@@ -43,9 +81,13 @@ RSS/Atom feeds (fetched hourly) ──► articles grouped by folder
         └─────────────┬───────────────┘
                  One EPUB per folder
                       │
-            SMTP ──► your @kindle.com address
+       ┌──────────────┴───────────────┐
+  download mode                   email mode
+  calibre → periodical .mobi      SMTP ──► your @kindle.com address
+  → Kindle page (port 3100)             │
+       └──────────────┬───────────────┘
                       │
-                Mark articles read in local DB
+         delivery marked published / sent
 ```
 
 - **Full text is always included.** If extraction fails (paywall, JS-rendered,
@@ -104,6 +146,12 @@ Copy `.env.example` to `.env` and set:
 | `ALERT_EMAIL` | – | Where delivery-failure alerts go. Defaults to `SMTP_FROM`. |
 | `DELIVERY_MAX_ATTEMPTS` | – | Retries before a delivery is marked failed and alerted. Default `5`. |
 | `BUILD_CONCURRENCY` | – | Articles fetched/rendered in parallel. Default `4`. Trades peak memory for build speed — lower it to `2` if builds run hot on a 512 MB VM. |
+| `DELIVERY_MODE` | – | `download` (default: Kindle page, no email) or `email`. First-run default only; the Settings page choice (stored in the DB) wins. Anything else means `download`. |
+| `KINDLE_PORT` | – | Port of the separate, login-free Kindle page. Default `3100`; `0` turns it off. |
+| `KINDLE_DIR` | – | Where published `.mobi` issues live (the Kindle page can see nothing else). Default `./data/kindle`; `/data/kindle` in Docker (on the volume). |
+| `KINDLE_KEEP_ISSUES` | – | Issues kept per folder. Default `7`. |
+| `EBOOK_CONVERT_BIN` | – | calibre's `ebook-convert`. Default: found on `PATH` (`/opt/calibre` in the image). |
+| `CONVERT_TIMEOUT_MS` | – | Kill a conversion after this long. Default `1200000` (20 min). A 34 MB EPUB converts in about 35 s. |
 
 No OAuth tokens or encryption keys are required.
 
@@ -122,7 +170,27 @@ No OAuth tokens or encryption keys are required.
 
 ---
 
+## Running the Docker image (home server)
+
+```bash
+# Dashboard on localhost (put it behind your access gateway);
+# Kindle page on the LAN address only (it has no login).
+docker build -t kindle-digest .
+docker run -d --name kindle-digest -v kindle-digest-data:/data \
+  -p 127.0.0.1:3000:3000 -p 192.168.1.x:3100:3100 kindle-digest
+```
+
+The image bundles calibre (pinned by the `CALIBRE_VERSION` build arg) for the
+MOBI conversion, which makes it large (~2.8 GB). Conversion peaks around 300 MB
+for the biggest (34 MB EPUB) digest, on top of the app itself. SMTP variables
+are not needed in the default `download` mode.
+
 ## Deploy to Fly.io
+
+> The Fly deployment predates the Kindle page and is being retired. The image
+> now contains calibre and `download` is the default mode, so a Fly deploy would
+> stop emailing unless `DELIVERY_MODE=email` is set (and a 512 MB VM is tight for
+> conversions). Fly deploys remain manual.
 
 ```bash
 # 1. Install flyctl and log in

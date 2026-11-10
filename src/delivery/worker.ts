@@ -1,11 +1,20 @@
 import { unlink } from 'node:fs/promises';
 import { DateTime } from 'luxon';
 import type { AppContext } from '../app/context.js';
+import { resolveSettings, type DeliveryMode } from '../app/settings.js';
 import type { DeliveryRow } from '../db/repositories.js';
-import { buildFolderEpub, sendBuiltDigest } from '../digest/service.js';
+import { buildFolderEpub, publishBuiltDigest, sendBuiltDigest } from '../digest/service.js';
 import { classifySmtpError } from '../mail/transport.js';
 import { sendFailureAlert } from '../mail/alert.js';
+import { PermanentConversionError } from '../mobi/convert.js';
 import { isExhausted, nextAttemptAt } from './backoff.js';
+
+/** The two delivery side effects, injectable so tests never mail or run calibre. */
+export interface DeliveryDeps {
+  send: typeof sendBuiltDigest;
+  publish: typeof publishBuiltDigest;
+  alert: typeof sendFailureAlert;
+}
 
 /** How often the worker looks for due work. */
 const TICK_MS = 30_000;
@@ -36,6 +45,11 @@ export class DeliveryWorker {
   constructor(
     private ctx: AppContext,
     private tickMs: number = TICK_MS,
+    private deps: DeliveryDeps = {
+      send: sendBuiltDigest,
+      publish: publishBuiltDigest,
+      alert: sendFailureAlert,
+    },
   ) {}
 
   start(): void {
@@ -117,8 +131,10 @@ export class DeliveryWorker {
       this.fail(row, new Error('missing built artifact'), { hasBuild: false, retry: true });
       return;
     }
+    // Read per delivery, so flipping the setting takes effect on the next row.
+    if (this.mode() === 'download') return this.doPublish(row, row.epub_path);
     try {
-      const { messageId } = await sendBuiltDigest(
+      const { messageId } = await this.deps.send(
         this.ctx,
         row.folder,
         row.digest_date,
@@ -133,6 +149,31 @@ export class DeliveryWorker {
       const retry = classifySmtpError(err) === 'transient';
       this.fail(row, err, { hasBuild: true, retry });
     }
+  }
+
+  /** Download mode: convert to a periodical MOBI and publish it on the Kindle page. */
+  private async doPublish(row: DeliveryRow, epubPath: string): Promise<void> {
+    try {
+      const { mobiPath, bytes } = await this.deps.publish(
+        this.ctx,
+        row.folder,
+        row.digest_date,
+        epubPath,
+      );
+      this.ctx.delivery.markPublished(row.id, mobiPath);
+      console.log(
+        `[delivery] published ${row.folder} ${row.digest_date} ` +
+          `(${(bytes / 1024 / 1024).toFixed(1)} MB) -> ${mobiPath}`,
+      );
+    } catch (err) {
+      // A timeout or a failed periodical check will fail identically next
+      // time; anything else (OOM kill, disk) is worth the retry schedule.
+      this.fail(row, err, { hasBuild: true, retry: !(err instanceof PermanentConversionError) });
+    }
+  }
+
+  private mode(): DeliveryMode {
+    return resolveSettings(this.ctx.env, this.ctx.settings).deliveryMode;
   }
 
   private fail(row: DeliveryRow, err: unknown, opts: { hasBuild: boolean; retry: boolean }): void {
@@ -152,9 +193,12 @@ export class DeliveryWorker {
 
   /** Send the one-shot alert for anything that ended up permanently failed. */
   private async flushAlerts(): Promise<void> {
+    const download = this.mode() === 'download';
     for (const row of this.ctx.delivery.dueForAlert()) {
       try {
-        await sendFailureAlert(this.ctx, row);
+        // Download mode never touches SMTP; the failed row on the dashboard is
+        // the notification there.
+        if (!download) await this.deps.alert(this.ctx, row);
       } catch (err) {
         // The alert rides the same SMTP path that may itself be broken, so a
         // failure here is expected sometimes. The outbox row remains the

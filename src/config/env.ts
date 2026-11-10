@@ -17,6 +17,8 @@ export interface Env {
     kindleEmail?: string;
     deliveryTime: string;
     timezone: string;
+    /** 'download' (Kindle page, default) or 'email' (SMTP to @kindle.com). */
+    deliveryMode: string;
   };
   fulltextMinChars: number;
   /** Directory built EPUBs are streamed to; lives on the Fly volume. */
@@ -27,9 +29,28 @@ export interface Env {
   deliveryMaxAttempts: number;
   /** Articles extracted/rendered in parallel during a build. */
   buildConcurrency: number;
+  /** Port of the separate, login-free Kindle page. 0 disables it. */
+  kindlePort: number;
+  /** Where published .mobi issues live; this is all the Kindle page can see. */
+  kindleDir: string;
+  /** Issues kept per folder on the Kindle page. */
+  kindleKeepIssues: number;
+  /** calibre's CLI converter. */
+  ebookConvertBin: string;
+  /** Kill a conversion after this long. */
+  convertTimeoutMs: number;
 }
 
 let cached: Env | undefined;
+
+/**
+ * Integer env var with a floor. A typo ("abc", "-3") falls back to the default
+ * rather than becoming NaN, which would silently break pruning and timeouts.
+ */
+function intEnv(name: string, fallback: number, min: number): number {
+  const n = Number(process.env[name]);
+  return process.env[name] !== undefined && Number.isInteger(n) && n >= min ? n : fallback;
+}
 
 export function loadEnv(): Env {
   if (cached) return cached;
@@ -49,6 +70,7 @@ export function loadEnv(): Env {
       kindleEmail: process.env.KINDLE_EMAIL,
       deliveryTime: process.env.DELIVERY_TIME ?? '06:30',
       timezone: process.env.TIMEZONE ?? 'America/New_York',
+      deliveryMode: process.env.DELIVERY_MODE ?? 'download',
     },
     fulltextMinChars: Number(process.env.FULLTEXT_MIN_CHARS ?? 1800),
     // Default alongside the DB so it lands on the mounted volume in production.
@@ -56,6 +78,11 @@ export function loadEnv(): Env {
     alertEmail: process.env.ALERT_EMAIL ?? process.env.SMTP_FROM,
     deliveryMaxAttempts: Number(process.env.DELIVERY_MAX_ATTEMPTS ?? 5),
     buildConcurrency: Number(process.env.BUILD_CONCURRENCY ?? DEFAULT_BUILD_CONCURRENCY),
+    kindlePort: intEnv('KINDLE_PORT', 3100, 0),
+    kindleDir: process.env.KINDLE_DIR ?? './data/kindle',
+    kindleKeepIssues: intEnv('KINDLE_KEEP_ISSUES', 7, 1),
+    ebookConvertBin: process.env.EBOOK_CONVERT_BIN ?? 'ebook-convert',
+    convertTimeoutMs: intEnv('CONVERT_TIMEOUT_MS', 20 * 60 * 1000, 1000),
   };
   return cached;
 }
