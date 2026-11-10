@@ -2,6 +2,49 @@
 
 What was chosen and why, newest first. Short on purpose.
 
+## Backfilling past issues (`import-issue`, Gmail fetch)
+
+**Why.** The archive only had issues published since download mode began; the
+older digests exist as EPUBs (Fly volume recovery, Gmail Sent Mail).
+
+**Reuse, not a second pipeline.** `import-issue` calls `publishIssue()` (the live
+path: OPF 2 periodical, OPF 2 cover, `--share-not-sync`, EXTH check) with
+`keepIssues: 0`, then `IssueRepo.record()`. Never prunes, never sends, never
+touches `delivery`/`articles`. The file on disk decides "already exists"; the
+index is only written after a successful conversion.
+
+**Staging dirs are not unpacked EPUBs.** The recovered `.staging-news-2026-11-01`
+held only the article pages and `images_*` files (the orchestrator stages just
+those; the OPF, cover, contents and NCX are made at zip time and were never
+written). So the importer rebuilds an EPUB from them with the same builders a live
+digest uses (`buildSectionIndexPage`, `buildTocPage`, `buildNcx`, `buildEpubToFile`).
+Facts come from the pages themselves: title (`h1`), feed (first part of the meta
+line), section (`feed-K-index.xhtml` link in the nav bar), so no database is needed.
+The cover uses the folder's own template/theme and the first article photo; it is
+a regenerated cover, not the original. Pages that were never staged (gaps in
+`art-N`) are left out; dangling Prev/Next links and `<img>`s are repaired.
+A directory that already is an unpacked EPUB is just zipped (mimetype first, stored).
+
+**Caveat on that staging dir.** It is a partial, interrupted build whose articles
+span 27 Oct – 9 Nov (the build ran on 10 Nov), so "News 2026-11-01" is not a
+faithful issue of that date; it was imported because it was asked for.
+
+**Root vs app user.** The app container runs as root, so `docker exec` as root
+is right there. The CLI refuses to run as root against files owned by another uid,
+so it cannot leave root-owned files an unprivileged app could not write.
+
+**`--dir` and folder names.** The slug in a file name loses case ("money"), but the
+issue's folder name is what goes into the OPF title and the /issues heading, so
+`--dir` maps slug → real name via the app's folders and fails the file (with the
+known names) instead of guessing.
+
+**Gmail fetch is a script, not app code.** Python stdlib (`imaplib`), host-side,
+so the app image gains no mail-reading code and no Gmail credential. `EXAMINE`
++ `BODY.PEEK`; a fake-IMAP test asserts that only SELECT/SEARCH/FETCH are issued.
+Falls back to the mailbox flagged `\Sent` if the English name does not exist
+(localised Gmail). Searching is by Message-ID only; a message whose ID Gmail
+rewrote shows as `missing` rather than being matched by guesswork.
+
 ## App login, accounts and the issue archive
 
 **Why.** The user wants to download issues on the Kindle from

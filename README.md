@@ -92,6 +92,54 @@ with large tap targets and no JavaScript.
   dashboard's *Recent deliveries* panel; a failed conversion shows there too,
   with its error. No email is sent in this mode, including failure alerts.
 
+### Backfilling past issues
+
+Two tools bring older digests into `/issues`. Neither sends mail, touches
+`delivery` rows or articles, or deletes any issue.
+
+**1. `import-issue`** (inside the app's container; it uses the app's own
+`DATABASE_PATH`, `KINDLE_DIR` and calibre):
+
+```bash
+# one issue: a digest .epub, an unpacked EPUB directory, or a build staging directory
+node dist/import/main.js --folder Money --date 2026-11-02 /in/money-2026-11-02.epub
+node dist/import/main.js --folder News  --date 2026-11-01 /in/.staging-news-2026-11-01
+
+# everything in a directory: "<Folder>-<YYYY-MM-DD>.epub" and ".staging-<Folder>-<YYYY-MM-DD>/"
+# (what fetch-sent-digests.py writes); *.azw3 and other files are ignored
+node dist/import/main.js --dir /in
+```
+
+It converts with the same pipeline as a live issue and files the result as
+`<KINDLE_DIR>/<folder-slug>/<slug>-<original date>.mobi`, so it sorts by its own
+date in `/issues`, then adds it to the index. An issue that already exists is
+skipped (`skipped …`), unless `--force`. One line per issue; exit code 1 if any
+failed. A **staging directory** (what an interrupted build leaves: only
+`art-N.xhtml` pages and `images_*` files) is rebuilt into an EPUB first, with the
+contents page, sections, cover and navigation regenerated from the pages; missing
+pages or pictures are reported on the line and left out cleanly. `--dir` takes the
+folder's proper name ("Money") from the app's own folders (so does `--folder money`). It refuses to run as
+root against files owned by another user, and refuses to create a new database.
+If `KINDLE_KEEP_ISSUES` is set to a number, the next live delivery of that folder
+prunes the oldest issues beyond it, backfilled ones included; leave it unset
+(keep everything) to keep a backfill.
+
+**2. `scripts/fetch-sent-digests.py`** (standalone Python, stdlib only; run on the
+host, not in the app): downloads the `.epub` attachments from Gmail's Sent Mail.
+
+```bash
+python3 scripts/latest-sent.py copy-of-kindle-digest.sqlite > map.csv   # message_id,folder,date; newest 10 per folder
+export GMAIL_IMAP_USER=...  GMAIL_IMAP_PASS=...      # a Gmail app password, in the environment only
+python3 scripts/fetch-sent-digests.py --map map.csv --out ./epubs       # writes <folder>-<date>.epub
+python3 -m unittest scripts/test_fetch_sent_digests.py                  # its tests (no network)
+```
+
+It opens `[Gmail]/Sent Mail` with `EXAMINE` (read-only), reads messages with
+`BODY.PEEK`, searches `HEADER Message-ID` per id, and reports `found`/`missing`
+per id (exit 1 if any are missing). The password is never printed. `--ids file`
+limits it to the Message-IDs listed in a file. The "newest 10 per folder" list is
+plain SQL if you prefer (it is in the `latest-sent.py` header).
+
 ### Email mode: whitelist your sender on Amazon
 
 **Send to Kindle silently drops email from unknown senders.** Before anything
