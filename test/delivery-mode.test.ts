@@ -7,7 +7,7 @@ import type { AppContext } from '../src/app/context.js';
 import { resolveSettings, parseDeliveryMode } from '../src/app/settings.js';
 import { DeliveryWorker, type DeliveryDeps } from '../src/delivery/worker.js';
 import { PermanentConversionError } from '../src/mobi/convert.js';
-import { buildServer } from '../src/web/server.js';
+import { makeApp, signIn } from './helpers/app.js';
 import { deliveryPanel, settingsPage } from '../src/web/views.js';
 
 function fakeEnv(over: Partial<Env['defaults']> = {}): Env {
@@ -21,9 +21,8 @@ function fakeEnv(over: Partial<Env['defaults']> = {}): Env {
     digestDir: '/tmp/none',
     deliveryMaxAttempts: 5,
     buildConcurrency: 1,
-    kindlePort: 0,
     kindleDir: '/tmp/none-kindle',
-    kindleKeepIssues: 7,
+    kindleKeepIssues: 0,
     ebookConvertBin: 'ebook-convert',
     convertTimeoutMs: 1000,
   };
@@ -93,19 +92,14 @@ describe('delivery mode setting', () => {
   });
 
   it('is saved from the Settings page, and junk values fall back to download', async () => {
-    const app = buildServer(ctx);
-    const post = (deliveryMode: string) =>
-      app.inject({
-        method: 'POST',
-        url: '/settings',
-        payload: `deliveryMode=${deliveryMode}`,
-        headers: { 'content-type': 'application/x-www-form-urlencoded' },
-      });
+    const t = makeApp(fakeEnv());
+    const session = await signIn(t);
+    const post = (deliveryMode: string) => session.post('/settings', { deliveryMode });
     expect((await post('email')).statusCode).toBe(302);
-    expect(resolveSettings(ctx.env, ctx.settings).deliveryMode).toBe('email');
+    expect(resolveSettings(t.ctx.env, t.ctx.settings).deliveryMode).toBe('email');
     await post('carrier-pigeon');
-    expect(resolveSettings(ctx.env, ctx.settings).deliveryMode).toBe('download');
-    await app.close();
+    expect(resolveSettings(t.ctx.env, t.ctx.settings).deliveryMode).toBe('download');
+    await t.app.close();
   });
 
   it('shows on the Settings page with the current choice selected', () => {

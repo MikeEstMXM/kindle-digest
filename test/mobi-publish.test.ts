@@ -11,6 +11,8 @@ import { issueSlug } from '../src/util/folderName.js';
 import { loadEnv, resetEnvCache } from '../src/config/env.js';
 import { readMobiExth, periodicalProblems } from '../src/mobi/exth.js';
 import { PermanentConversionError } from '../src/mobi/convert.js';
+import { publishBuiltDigest } from '../src/digest/service.js';
+import { makeApp, testEnv } from './helpers/app.js';
 
 const BIN = process.env.EBOOK_CONVERT_BIN ?? 'ebook-convert';
 const hasCalibre = spawnSync(BIN, ['--version'], { stdio: 'ignore' }).status === 0;
@@ -107,6 +109,45 @@ describe.skipIf(!hasCalibre)('periodical conversion (real ebook-convert)', () =>
     // Nothing but the finished issue is left behind (work dir is dot-prefixed and emptied).
     expect(await readdir(join(kindleDir, 'technology'))).toEqual(['technology-2026-11-10.mobi']);
     expect(await readdir(join(kindleDir, '.work'))).toEqual([]);
+  }, 300_000);
+
+  it('keeps every issue when no limit is set, and prunes only when one is', async () => {
+    const epub = join(dir, 'keep.epub');
+    await fixtureEpub(epub, 'Retain');
+    const kindleDir = join(dir, 'kindle-keep');
+    const folderDir = join(kindleDir, 'retain');
+    await mkdir(folderDir, { recursive: true });
+    for (let d = 1; d <= 10; d++) {
+      await writeFile(join(folderDir, `retain-2026-10-${String(d).padStart(2, '0')}.mobi`), 'old');
+    }
+    const base = { epubPath: epub, folder: 'Retain', kindleDir, ebookConvertBin: BIN, timeoutMs: 5 * 60 * 1000 };
+
+    const all = await publishIssue({ ...base, isoDate: '2026-11-10', keepIssues: 0 });
+    expect(all.pruned).toEqual([]);
+    expect(await readdir(folderDir)).toHaveLength(11);
+
+    const some = await publishIssue({ ...base, isoDate: '2026-11-11', keepIssues: 3 });
+    expect(some.pruned).toHaveLength(9);
+    expect((await readdir(folderDir)).sort()).toEqual([
+      'retain-2026-11-10.mobi',
+      'retain-2026-11-11.mobi',
+      'retain-2026-10-10.mobi',
+    ].sort());
+  }, 300_000);
+
+  it('publishing adds the issue to the archive index, and retention removes pruned ones from it', async () => {
+    const epub = join(dir, 'index.epub');
+    await fixtureEpub(epub, 'Indexed');
+    const t = makeApp(testEnv({ kindleDir: join(dir, 'kindle-index'), ebookConvertBin: BIN, convertTimeoutMs: 5 * 60 * 1000 }));
+    await publishBuiltDigest(t.ctx, 'Indexed', '2026-11-09', epub);
+    await publishBuiltDigest(t.ctx, 'Indexed', '2026-11-10', epub);
+    expect(t.ctx.issues.list('indexed').map((i) => i.issueDate)).toEqual(['2026-11-10', '2026-11-09']);
+    expect(t.ctx.issues.folders()[0]).toMatchObject({ folder: 'Indexed', count: 2 });
+
+    t.ctx.env.kindleKeepIssues = 1;
+    await publishBuiltDigest(t.ctx, 'Indexed', '2026-11-11', epub);
+    expect(t.ctx.issues.list('indexed').map((i) => i.issueDate)).toEqual(['2026-11-11']);
+    await t.app.close();
   }, 300_000);
 
   it('rejects an EPUB without a cover instead of publishing a coverless issue', async () => {
@@ -256,18 +297,18 @@ describe('env validation', () => {
   it('falls back to defaults for typos instead of NaN', async () => {
     process.env.KINDLE_KEEP_ISSUES = 'abc';
     process.env.CONVERT_TIMEOUT_MS = '-5';
-    process.env.KINDLE_PORT = 'x';
     resetEnvCache();
     const env = loadEnv();
-    expect(env.kindleKeepIssues).toBe(7);
+    expect(env.kindleKeepIssues).toBe(0); // a typo means "keep everything", never "delete"
     expect(env.convertTimeoutMs).toBe(20 * 60 * 1000);
-    expect(env.kindlePort).toBe(3100);
-    process.env.KINDLE_PORT = '0';
-    resetEnvCache();
-    expect(loadEnv().kindlePort).toBe(0); // 0 = disabled is a valid value
     delete process.env.KINDLE_KEEP_ISSUES;
     delete process.env.CONVERT_TIMEOUT_MS;
-    delete process.env.KINDLE_PORT;
+    resetEnvCache();
+    expect(loadEnv().kindleKeepIssues).toBe(0); // unset keeps every issue
+    process.env.KINDLE_KEEP_ISSUES = '3';
+    resetEnvCache();
+    expect(loadEnv().kindleKeepIssues).toBe(3);
+    delete process.env.KINDLE_KEEP_ISSUES;
     resetEnvCache();
   });
 });

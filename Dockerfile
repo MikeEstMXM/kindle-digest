@@ -62,12 +62,12 @@ ENV NODE_ENV=production \
     DATABASE_PATH=/data/kindle-digest.sqlite \
     DIGEST_DIR=/data/digests \
     KINDLE_DIR=/data/kindle \
-    KINDLE_PORT=3100 \
     LD_PRELOAD=/usr/lib/x86_64-linux-gnu/libjemalloc.so.2
 
-# 3000 = the app (dashboard; has no login of its own — keep it behind Access).
-# 3100 = the Kindle page: issue list + .mobi downloads only, no login, LAN use.
-EXPOSE 3000 3100
+# 3000 = the app: dashboard, issue archive (/issues) and login. Everything but
+# /login, /setup and /healthz needs a signed-in session. SESSION_SECRET is
+# supplied at run time (optional; see README).
+EXPOSE 3000
 VOLUME ["/data"]
 
 CMD ["node", "dist/index.js"]

@@ -1,4 +1,4 @@
-import type { DB } from './schema.js';
+import { OWNER_USER_ID, type DB } from './schema.js';
 import { encrypt, decrypt } from '../config/crypto.js';
 
 // ─── Settings ───────────────────────────────────────────────────────────────
@@ -17,10 +17,15 @@ export interface AppSettings {
 }
 
 export class SettingsRepo {
-  constructor(private db: DB) {}
+  constructor(
+    private db: DB,
+    private userId: number = OWNER_USER_ID,
+  ) {}
 
   get(key: string): string | undefined {
-    const row = this.db.prepare('SELECT value FROM settings WHERE key = ?').get(key) as
+    const row = this.db
+      .prepare('SELECT value FROM settings WHERE user_id = ? AND key = ?')
+      .get(this.userId, key) as
       | { value: string }
       | undefined;
     return row?.value;
@@ -29,14 +34,16 @@ export class SettingsRepo {
   set(key: string, value: string): void {
     this.db
       .prepare(
-        `INSERT INTO settings (key, value) VALUES (?, ?)
-         ON CONFLICT(key) DO UPDATE SET value = excluded.value`,
+        `INSERT INTO settings (user_id, key, value) VALUES (?, ?, ?)
+         ON CONFLICT(user_id, key) DO UPDATE SET value = excluded.value`,
       )
-      .run(key, value);
+      .run(this.userId, key, value);
   }
 
   all(): Record<string, string> {
-    const rows = this.db.prepare('SELECT key, value FROM settings').all() as {
+    const rows = this.db
+      .prepare('SELECT key, value FROM settings WHERE user_id = ?')
+      .all(this.userId) as {
       key: string;
       value: string;
     }[];
@@ -270,6 +277,7 @@ export type DeliveryState =
 
 export interface DeliveryRow {
   id: number;
+  user_id: number;
   digest_date: string;
   folder: string;
   state: DeliveryState;
@@ -293,10 +301,13 @@ export interface DeliveryRow {
  * or OOM at any point leaves a row that the startup sweep can recover.
  */
 export class DeliveryRepo {
-  constructor(private db: DB) {}
+  constructor(
+    private db: DB,
+    private userId: number = OWNER_USER_ID,
+  ) {}
 
   /**
-   * Queue a digest for delivery. Idempotent via UNIQUE(digest_date, folder):
+   * Queue a digest for delivery. Idempotent via UNIQUE(user_id, digest_date, folder):
    * a double-clicked "Send all", a duplicated scheduler timer and the startup
    * catch-up can all race without ever producing two emails.
    * Returns true if a new row was created.
@@ -305,24 +316,26 @@ export class DeliveryRepo {
     const info = this.db
       .prepare(
         `INSERT INTO delivery
-           (digest_date, folder, state, next_attempt_at, created_at, updated_at)
-         VALUES (?, ?, 'pending', ?, ?, ?)
-         ON CONFLICT (digest_date, folder) DO NOTHING`,
+           (user_id, digest_date, folder, state, next_attempt_at, created_at, updated_at)
+         VALUES (?, ?, ?, 'pending', ?, ?, ?)
+         ON CONFLICT (user_id, digest_date, folder) DO NOTHING`,
       )
-      .run(digestDate, folder, now, now, now);
+      .run(this.userId, digestDate, folder, now, now, now);
     return info.changes > 0;
   }
 
   get(id: number): DeliveryRow | undefined {
-    return this.db.prepare('SELECT * FROM delivery WHERE id = ?').get(id) as
+    return this.db
+      .prepare('SELECT * FROM delivery WHERE id = ? AND user_id = ?')
+      .get(id, this.userId) as
       | DeliveryRow
       | undefined;
   }
 
   find(digestDate: string, folder: string): DeliveryRow | undefined {
     return this.db
-      .prepare('SELECT * FROM delivery WHERE digest_date = ? AND folder = ?')
-      .get(digestDate, folder) as DeliveryRow | undefined;
+      .prepare('SELECT * FROM delivery WHERE user_id = ? AND digest_date = ? AND folder = ?')
+      .get(this.userId, digestDate, folder) as DeliveryRow | undefined;
   }
 
   /**
@@ -336,10 +349,10 @@ export class DeliveryRepo {
       const candidate = this.db
         .prepare(
           `SELECT * FROM delivery
-           WHERE state IN ('pending', 'built') AND next_attempt_at <= ?
+           WHERE user_id = ? AND state IN ('pending', 'built') AND next_attempt_at <= ?
            ORDER BY next_attempt_at, id LIMIT 1`,
         )
-        .get(now) as DeliveryRow | undefined;
+        .get(this.userId, now) as DeliveryRow | undefined;
       if (!candidate) return undefined;
 
       const target: DeliveryState = candidate.state === 'built' ? 'sending' : 'building';
@@ -436,17 +449,21 @@ export class DeliveryRepo {
              attempts = attempts + 1,
              last_error = 'interrupted (process restart or out-of-memory)',
              next_attempt_at = ?, claimed_at = NULL, updated_at = ?
-         WHERE state IN ('building', 'sending') AND claimed_at IS NOT NULL AND claimed_at < ?`,
+         WHERE user_id = ? AND state IN ('building', 'sending')
+           AND claimed_at IS NOT NULL AND claimed_at < ?`,
       )
-      .run(now, now, cutoff);
+      .run(now, now, this.userId, cutoff);
     return info.changes;
   }
 
   /** Failed deliveries that still need their one-shot alert email. */
   dueForAlert(): DeliveryRow[] {
     return this.db
-      .prepare(`SELECT * FROM delivery WHERE state = 'failed' AND alerted_at IS NULL ORDER BY id`)
-      .all() as DeliveryRow[];
+      .prepare(
+        `SELECT * FROM delivery
+         WHERE user_id = ? AND state = 'failed' AND alerted_at IS NULL ORDER BY id`,
+      )
+      .all(this.userId) as DeliveryRow[];
   }
 
   markAlerted(id: number): void {
@@ -457,8 +474,8 @@ export class DeliveryRepo {
 
   recent(limit = 20): DeliveryRow[] {
     return this.db
-      .prepare('SELECT * FROM delivery ORDER BY id DESC LIMIT ?')
-      .all(limit) as DeliveryRow[];
+      .prepare('SELECT * FROM delivery WHERE user_id = ? ORDER BY id DESC LIMIT ?')
+      .all(this.userId, limit) as DeliveryRow[];
   }
 
   /** EPUBs on disk that are no longer needed, for retention pruning. */
@@ -466,9 +483,10 @@ export class DeliveryRepo {
     return this.db
       .prepare(
         `SELECT * FROM delivery
-         WHERE epub_path IS NOT NULL AND digest_date < ? AND state IN ('sent', 'published', 'skipped', 'failed')`,
+         WHERE user_id = ? AND epub_path IS NOT NULL AND digest_date < ?
+           AND state IN ('sent', 'published', 'skipped', 'failed')`,
       )
-      .all(beforeDate) as DeliveryRow[];
+      .all(this.userId, beforeDate) as DeliveryRow[];
   }
 
   clearArtifact(id: number): void {

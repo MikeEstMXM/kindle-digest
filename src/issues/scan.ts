@@ -1,60 +1,63 @@
 import { lstat, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
-import { readMobiExth } from '../mobi/exth.js';
 import { ISSUE_FILE } from '../mobi/publish.js';
 
-export interface Issue {
+/**
+ * Looking at the issue files on disk. The database is what the archive pages
+ * list; this is how it learns about files it did not publish itself (issues
+ * from before accounts existed) and how a download is checked against the real
+ * file before a byte is sent.
+ */
+
+export interface DiskIssue {
   file: string;
   /** ISO date from the filename. */
   date: string;
   bytes: number;
 }
 
-export interface PublishedFolder {
+export interface DiskFolder {
   /** Directory name (slug) — what appears in URLs. */
   dir: string;
-  /** The folder's real name, read from the newest MOBI; falls back to the slug. */
-  title: string;
   /** Newest first. */
-  issues: Issue[];
+  issues: DiskIssue[];
 }
 
-const DIR_NAME = /^[a-z0-9-]+$/;
+/** A folder slug as it appears in a directory name and in URLs. */
+export const DIR_NAME = /^[a-z0-9-]+$/;
 
 /**
- * Scan the Kindle directory. Only `<slug>/<slug>-YYYY-MM-DD.mobi` regular files
- * are ever reported; anything else on disk (work dirs, symlinks, stray files)
- * is invisible. Folders ordered by their newest issue, newest first.
+ * Scan the issue directory. Only `<slug>/<slug>-YYYY-MM-DD.mobi` regular files
+ * are ever reported; anything else on disk (work dirs, thumbnails, symlinks,
+ * stray files) is invisible. Returns undefined when the directory itself cannot
+ * be read, so callers can tell "nothing there" from "could not look".
  */
-export async function listPublished(kindleDir: string): Promise<PublishedFolder[]> {
+export async function scanIssues(kindleDir: string): Promise<DiskFolder[] | undefined> {
   let dirs: string[];
   try {
     dirs = (await readdir(kindleDir, { withFileTypes: true }))
       .filter((d) => d.isDirectory() && DIR_NAME.test(d.name))
       .map((d) => d.name);
   } catch {
-    return [];
+    return undefined;
   }
 
-  const folders: PublishedFolder[] = [];
+  const folders: DiskFolder[] = [];
   for (const dir of dirs) {
     try {
       const issues = await listIssues(kindleDir, dir);
-      if (issues.length === 0) continue;
-      folders.push({ dir, title: await titleOf(kindleDir, dir, issues[0]), issues });
+      if (issues.length > 0) folders.push({ dir, issues });
     } catch {
       // The folder vanished or is unreadable mid-scan; list the others.
     }
   }
-  return folders.sort(
-    (a, b) => b.issues[0].date.localeCompare(a.issues[0].date) || a.title.localeCompare(b.title),
-  );
+  return folders;
 }
 
-async function listIssues(kindleDir: string, dir: string): Promise<Issue[]> {
+async function listIssues(kindleDir: string, dir: string): Promise<DiskIssue[]> {
   // A symlinked directory would otherwise be followed out of KINDLE_DIR.
   if (!(await lstat(join(kindleDir, dir))).isDirectory()) return [];
-  const issues: Issue[] = [];
+  const issues: DiskIssue[] = [];
   for (const entry of await readdir(join(kindleDir, dir), { withFileTypes: true })) {
     const m = ISSUE_FILE.exec(entry.name);
     // Dirent.isFile() is false for symlinks, so links are never followed.
@@ -72,19 +75,11 @@ async function listIssues(kindleDir: string, dir: string): Promise<Issue[]> {
   return issues.sort((a, b) => b.date.localeCompare(a.date));
 }
 
-async function titleOf(kindleDir: string, dir: string, newest: Issue): Promise<string> {
-  try {
-    return (await readMobiExth(join(kindleDir, dir, newest.file))).updatedTitle ?? dir;
-  } catch {
-    return dir;
-  }
-}
-
 /**
  * Resolve a requested file to a path on disk, or undefined if it is not a
- * published issue. The names are validated against strict patterns *and*
- * matched against the actual directory listing of regular files, so there is
- * no path to traverse.
+ * published issue. The names must match strict patterns (no slashes, dots or
+ * anything else that could leave the directory) and both the folder and the
+ * file are checked with lstat, which does not follow symlinks.
  */
 export async function resolveIssue(
   kindleDir: string,
@@ -93,7 +88,11 @@ export async function resolveIssue(
 ): Promise<{ path: string; bytes: number } | undefined> {
   const m = ISSUE_FILE.exec(file);
   if (!DIR_NAME.test(dir) || !m || m[1] !== dir) return undefined;
-  const issues = await listIssues(kindleDir, dir).catch(() => []);
-  const hit = issues.find((i) => i.file === file);
-  return hit ? { path: join(kindleDir, dir, file), bytes: hit.bytes } : undefined;
+  try {
+    if (!(await lstat(join(kindleDir, dir))).isDirectory()) return undefined;
+    const st = await lstat(join(kindleDir, dir, file));
+    return st.isFile() ? { path: join(kindleDir, dir, file), bytes: st.size } : undefined;
+  } catch {
+    return undefined;
+  }
 }

@@ -9,8 +9,9 @@ export interface PublishOptions {
   epubPath: string;
   folder: string;
   isoDate: string;
-  /** Root of the Kindle page's files: <kindleDir>/<folder-slug>/<slug>-<date>.mobi */
+  /** Root of the issue archive's files: <kindleDir>/<folder-slug>/<slug>-<date>.mobi */
   kindleDir: string;
+  /** Newest issues to keep per folder. 0 (or less) keeps every issue. */
   keepIssues: number;
   ebookConvertBin: string;
   timeoutMs: number;
@@ -19,9 +20,14 @@ export interface PublishOptions {
 export interface PublishedIssue {
   mobiPath: string;
   bytes: number;
+  /** Folder directory name, and the issue's file name inside it. */
+  slug: string;
+  fileName: string;
+  /** Older issues deleted by retention (never any when keepIssues is 0). */
+  pruned: string[];
 }
 
-/** `<slug>-YYYY-MM-DD.mobi` — the only filenames the Kindle page will ever list or serve. */
+/** `<slug>-YYYY-MM-DD.mobi` — the only filenames the issue archive will ever list or serve. */
 export const ISSUE_FILE = /^([a-z0-9-]+)-(\d{4}-\d{2}-\d{2})\.mobi$/;
 
 /**
@@ -63,13 +69,17 @@ export async function publishIssue(opts: PublishOptions): Promise<PublishedIssue
 
   const bytes = (await stat(finalPath)).size;
   // Best effort: the issue is already live, so a pruning hiccup must not turn a
-  // successful publish into a "failed" delivery.
-  try {
-    await pruneIssues(folderDir, slug, opts.keepIssues, fileName);
-  } catch (err) {
-    console.error(`[kindle] could not prune old ${slug} issues:`, err);
+  // successful publish into a "failed" delivery. Keeping everything is the
+  // default, so pruning only happens when a limit was asked for.
+  let pruned: string[] = [];
+  if (opts.keepIssues > 0) {
+    try {
+      pruned = await pruneIssues(folderDir, slug, opts.keepIssues, fileName);
+    } catch (err) {
+      console.error(`[kindle] could not prune old ${slug} issues:`, err);
+    }
   }
-  return { mobiPath: finalPath, bytes };
+  return { mobiPath: finalPath, bytes, slug, fileName, pruned };
 }
 
 /** Remove conversion leftovers from a previous process that was killed mid-run. */

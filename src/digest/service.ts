@@ -95,7 +95,7 @@ export async function publishBuiltDigest(
   isoDate: string,
   epubPath: string,
 ): Promise<{ mobiPath: string; bytes: number }> {
-  return publishIssue({
+  const published = await publishIssue({
     epubPath,
     folder,
     isoDate,
@@ -104,6 +104,16 @@ export async function publishBuiltDigest(
     ebookConvertBin: ctx.env.ebookConvertBin,
     timeoutMs: ctx.env.convertTimeoutMs,
   });
+  // Add it to the archive index (and drop any issues retention just deleted).
+  ctx.issues.record({
+    slug: published.slug,
+    folder,
+    issueDate: isoDate,
+    fileName: published.fileName,
+    bytes: published.bytes,
+  });
+  ctx.issues.forget(published.slug, published.pruned);
+  return { mobiPath: published.mobiPath, bytes: published.bytes };
 }
 
 /**

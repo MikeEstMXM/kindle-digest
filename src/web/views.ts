@@ -5,6 +5,7 @@ import type { NormalizedArticle } from '../reader/types.js';
 import type { EffectiveSettings } from '../app/settings.js';
 import type { FolderSendResult } from '../digest/service.js';
 import type { Feed, FolderSettings } from '../db/feedRepos.js';
+import { MIN_PASSWORD_LENGTH, PASSWORD_PROBLEM_TEXT } from '../auth/password.js';
 
 const STYLE = `
   :root { --fg:#1a1a1a; --muted:#666; --line:#ddd; --accent:#1a6; --bg:#fafafa; }
@@ -56,26 +57,53 @@ const STYLE = `
   .muted { color:var(--muted); }
   .row { display:flex; gap:8px; align-items:flex-end; }
   .row input { flex:1; }
+  .signout { display:inline; margin-left:16px; }
+  .signout button { background:none; border:0; color:#fff; opacity:0.85; padding:0; font:inherit; cursor:pointer; }
+  .signout button:hover { opacity:1; }
 `;
 
-export function layout(title: string, body: string): string {
-  return `<!DOCTYPE html>
+/**
+ * Put the CSRF token into every state-changing form, in one place, so a form
+ * added to a view later is covered without anyone remembering. Plain forms get
+ * a hidden field; multipart forms (whose body is not parsed before the check)
+ * carry it in the action URL instead. htmx requests get it from hx-headers on
+ * <body>. A form that somehow misses out fails closed (403), never open.
+ */
+export function withCsrf(html: string, csrf: string): string {
+  const token = escapeHtml(csrf);
+  return html.replace(/<form\b[^>]*>/gi, (tag) => {
+    if (!/\bmethod\s*=\s*"post"/i.test(tag)) return tag;
+    if (/multipart\/form-data/i.test(tag)) {
+      return tag.replace(/\baction="([^"]*)"/i, (_m, action: string) => {
+        const sep = action.includes('?') ? '&' : '?';
+        return `action="${action}${sep}_csrf=${encodeURIComponent(csrf)}"`;
+      });
+    }
+    return `${tag}<input type="hidden" name="_csrf" value="${token}" />`;
+  });
+}
+
+export function layout(title: string, body: string, csrf: string): string {
+  const html = `<!DOCTYPE html>
 <html lang="en"><head>
 <meta charset="utf-8" /><meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${escapeHtml(title)} — Kindle Digest</title>
 <script src="/vendor/htmx.min.js"></script>
 <style>${STYLE}</style>
-</head><body>
+</head><body hx-headers='{"X-CSRF-Token":"${escapeHtml(csrf)}"}'>
 <header>
   <strong>Kindle Digest</strong>
   <nav>
     <a href="/">Dashboard</a>
     <a href="/feeds">Feeds</a>
+    <a href="/issues">Issues</a>
     <a href="/settings">Settings</a>
+    <form method="post" action="/logout" class="signout"><button type="submit">Sign out</button></form>
   </nav>
 </header>
 <main>${body}</main>
 </body></html>`;
+  return withCsrf(html, csrf);
 }
 
 export function noFeedsPrompt(error?: string): string {
@@ -366,7 +394,22 @@ export function feedsPage(feeds: Feed[], folderSettingsMap: Map<string, FolderSe
   </div>`;
 }
 
-export function settingsPage(s: EffectiveSettings, timezones: string[]): string {
+/** What the Settings page says after a password-change attempt (?pw=...). */
+const PASSWORD_NOTICES: Record<string, { ok: boolean; text: string }> = {
+  ok: { ok: true, text: 'Password changed. Other signed-in devices were signed out.' },
+  wrong: { ok: false, text: 'The current password was wrong.' },
+  limited: { ok: false, text: 'Too many failed attempts. Try again in a few minutes.' },
+  ...Object.fromEntries(
+    Object.entries(PASSWORD_PROBLEM_TEXT).map(([code, text]) => [code, { ok: false, text }]),
+  ),
+};
+
+export function settingsPage(
+  s: EffectiveSettings,
+  timezones: string[],
+  passwordNotice?: string,
+): string {
+  const pw = passwordNotice ? PASSWORD_NOTICES[passwordNotice] : undefined;
   const tzOptions = timezones
     .map(
       (tz) => `<option value="${escapeHtml(tz)}"${tz === s.timezone ? ' selected' : ''}>${escapeHtml(tz)}</option>`,
@@ -376,11 +419,11 @@ export function settingsPage(s: EffectiveSettings, timezones: string[]): string 
   <form method="post" action="/settings">
     <label class="field"><span>Delivery mode</span>
       <select name="deliveryMode">
-        <option value="download"${s.deliveryMode === 'download' ? ' selected' : ''}>Kindle page — publish a periodical to download on the Kindle (no email)</option>
+        <option value="download"${s.deliveryMode === 'download' ? ' selected' : ''}>Download — publish a periodical to the Issues page to download on the Kindle (no email)</option>
         <option value="email"${s.deliveryMode === 'email' ? ' selected' : ''}>Email — send the EPUB to your @kindle.com address (issues will not stack)</option>
       </select></label>
-    <p class="muted">Kindle page mode never uses the SMTP settings below. Open the Kindle page
-      (port 3100 by default) in the Kindle's browser to download issues.</p>
+    <p class="muted">Download mode never uses the SMTP settings below. Sign in on the Kindle's
+      browser and open <a href="/issues">Issues</a> to download them.</p>
     <div class="notice"><strong>Email mode only: Kindle whitelist required.</strong> Add your SMTP <em>from</em> address
       (<code>${escapeHtml(s.smtp.from ?? 'not set')}</code>) to Amazon's
       <em>Approved Personal Document E-mail List</em>, or deliveries are silently dropped.</div>
@@ -400,5 +443,16 @@ export function settingsPage(s: EffectiveSettings, timezones: string[]): string 
     <label class="field"><span>From address (must be Amazon-whitelisted)</span>
       <input name="smtpFrom" type="email" value="${escapeHtml(s.smtp.from ?? '')}" /></label>
     <p><button type="submit">Save settings</button></p>
+  </form>
+  <h2 id="password">Change password</h2>
+  ${pw ? `<div class="notice">${escapeHtml(pw.text)}</div>` : ''}
+  <form method="post" action="/settings/password">
+    <label class="field"><span>Current password</span>
+      <input name="current" type="password" autocomplete="current-password" required /></label>
+    <label class="field"><span>New password (at least ${MIN_PASSWORD_LENGTH} characters)</span>
+      <input name="password" type="password" autocomplete="new-password" required /></label>
+    <label class="field"><span>New password again</span>
+      <input name="confirm" type="password" autocomplete="new-password" required /></label>
+    <p><button type="submit">Change password</button></p>
   </form>`;
 }
