@@ -1,4 +1,4 @@
-import { readdir, stat } from 'node:fs/promises';
+import { lstat, readdir, stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { readMobiExth } from '../mobi/exth.js';
 import { ISSUE_FILE } from '../mobi/publish.js';
@@ -38,9 +38,13 @@ export async function listPublished(kindleDir: string): Promise<PublishedFolder[
 
   const folders: PublishedFolder[] = [];
   for (const dir of dirs) {
-    const issues = await listIssues(kindleDir, dir);
-    if (issues.length === 0) continue;
-    folders.push({ dir, title: await titleOf(kindleDir, dir, issues[0]), issues });
+    try {
+      const issues = await listIssues(kindleDir, dir);
+      if (issues.length === 0) continue;
+      folders.push({ dir, title: await titleOf(kindleDir, dir, issues[0]), issues });
+    } catch {
+      // The folder vanished or is unreadable mid-scan; list the others.
+    }
   }
   return folders.sort(
     (a, b) => b.issues[0].date.localeCompare(a.issues[0].date) || a.title.localeCompare(b.title),
@@ -48,16 +52,22 @@ export async function listPublished(kindleDir: string): Promise<PublishedFolder[
 }
 
 async function listIssues(kindleDir: string, dir: string): Promise<Issue[]> {
+  // A symlinked directory would otherwise be followed out of KINDLE_DIR.
+  if (!(await lstat(join(kindleDir, dir))).isDirectory()) return [];
   const issues: Issue[] = [];
   for (const entry of await readdir(join(kindleDir, dir), { withFileTypes: true })) {
     const m = ISSUE_FILE.exec(entry.name);
     // Dirent.isFile() is false for symlinks, so links are never followed.
     if (!entry.isFile() || !m || m[1] !== dir) continue;
-    issues.push({
-      file: entry.name,
-      date: m[2],
-      bytes: (await stat(join(kindleDir, dir, entry.name))).size,
-    });
+    try {
+      issues.push({
+        file: entry.name,
+        date: m[2],
+        bytes: (await stat(join(kindleDir, dir, entry.name))).size,
+      });
+    } catch {
+      // Pruned between readdir and stat — it is simply no longer an issue.
+    }
   }
   return issues.sort((a, b) => b.date.localeCompare(a.date));
 }

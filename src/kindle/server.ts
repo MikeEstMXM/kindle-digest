@@ -1,6 +1,6 @@
-import { createReadStream } from 'node:fs';
+import { open, type FileHandle } from 'node:fs/promises';
 import { DateTime } from 'luxon';
-import Fastify, { type FastifyInstance } from 'fastify';
+import Fastify, { type FastifyError, type FastifyInstance } from 'fastify';
 import { escapeHtml } from '../util/html.js';
 import { listPublished, resolveIssue, type PublishedFolder } from './issues.js';
 
@@ -16,7 +16,8 @@ export const MOBI_TYPE = 'application/x-mobipocket-ebook';
  * app; all it is given is a directory.
  */
 export function buildKindleServer(opts: { kindleDir: string; logger?: boolean }): FastifyInstance {
-  const app = Fastify({ logger: opts.logger ?? true });
+  // Folder slugs are up to ~70 chars; Fastify's default param limit is 100.
+  const app = Fastify({ logger: opts.logger ?? true, maxParamLength: 300 });
 
   app.get('/', async (_req, reply) => {
     const folders = await listPublished(opts.kindleDir);
@@ -30,14 +31,36 @@ export function buildKindleServer(opts: { kindleDir: string; logger?: boolean })
     const { dir, file } = req.params as { dir: string; file: string };
     const hit = await resolveIssue(opts.kindleDir, dir, file);
     if (!hit) return reply.code(404).type('text/plain').send('Not found');
-    return reply
+    // Size comes from the open handle, which also survives the file being
+    // pruned or replaced mid-download.
+    let fh: FileHandle;
+    try {
+      fh = await open(hit.path, 'r');
+    } catch {
+      return reply.code(404).type('text/plain').send('Not found');
+    }
+    const { size } = await fh.stat();
+    reply
       .header('Content-Type', MOBI_TYPE)
-      .header('Content-Length', hit.bytes)
+      .header('Content-Length', size)
       .header('Content-Disposition', `attachment; filename="${file}"`)
-      .header('X-Content-Type-Options', 'nosniff')
-      .send(createReadStream(hit.path));
+      .header('X-Content-Type-Options', 'nosniff');
+    if (req.method === 'HEAD') {
+      await fh.close();
+      return reply.send();
+    }
+    return reply.send(fh.createReadStream());
   });
 
+  // Never show an error message (it can contain server paths).
+  app.setErrorHandler((err: FastifyError, req, reply) => {
+    req.log.error(err);
+    const status = err.statusCode && err.statusCode < 500 ? err.statusCode : 500;
+    return reply
+      .code(status)
+      .type('text/plain')
+      .send(status === 500 ? 'Internal error' : 'Bad request');
+  });
   // Everything else — including every path the main app serves — is a 404.
   app.setNotFoundHandler((_req, reply) => reply.code(404).type('text/plain').send('Not found'));
   return app;

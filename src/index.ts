@@ -21,7 +21,11 @@ async function main(): Promise<void> {
   // then queue any delivery slot that passed while we were down. Both are
   // idempotent, so a restart loop can't duplicate a digest.
   worker.recoverInterrupted();
-  await clearWorkDir(ctx.env.kindleDir); // conversion leftovers from a killed run
+  // Conversion leftovers from a killed run. Best effort: an unwritable
+  // KINDLE_DIR must not stop an email-mode deployment from starting.
+  await clearWorkDir(ctx.env.kindleDir).catch((err) =>
+    console.error('[kindle] could not clear work dir:', err),
+  );
   scheduler.catchUp();
 
   scheduler.start();
@@ -41,7 +45,10 @@ async function main(): Promise<void> {
   const kindleApp =
     ctx.env.kindlePort > 0 ? buildKindleServer({ kindleDir: ctx.env.kindleDir }) : undefined;
   if (kindleApp) {
-    await kindleApp.listen({ port: ctx.env.kindlePort, host: '0.0.0.0' });
+    // Non-fatal: a taken port shouldn't take the dashboard and scheduler down.
+    await kindleApp
+      .listen({ port: ctx.env.kindlePort, host: '0.0.0.0' })
+      .catch((err) => console.error('[kindle] Kindle page failed to start:', err));
   }
 
   const shutdown = async (): Promise<void> => {

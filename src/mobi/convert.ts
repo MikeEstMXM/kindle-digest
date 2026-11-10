@@ -64,7 +64,8 @@ export function runEbookConvert(
       QT_QPA_PLATFORM: process.env.QT_QPA_PLATFORM ?? 'offscreen',
     };
     delete env.LD_PRELOAD;
-    const child = spawn(opts.bin, args, { stdio: ['ignore', 'pipe', 'pipe'], env });
+    // Own process group, so a timeout can kill calibre's helper processes too.
+    const child = spawn(opts.bin, args, { stdio: ['ignore', 'pipe', 'pipe'], env, detached: true });
     // Keep only the tail: calibre prints a progress line per step.
     let tail = '';
     const keep = (chunk: Buffer): void => {
@@ -76,7 +77,11 @@ export function runEbookConvert(
     let timedOut = false;
     const timer = setTimeout(() => {
       timedOut = true;
-      child.kill('SIGKILL');
+      try {
+        if (child.pid) process.kill(-child.pid, 'SIGKILL');
+      } catch {
+        child.kill('SIGKILL');
+      }
     }, opts.timeoutMs);
 
     child.on('error', (err: NodeJS.ErrnoException) => {

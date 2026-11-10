@@ -25,6 +25,14 @@ beforeAll(async () => {
   await writeFile(join(root, 'secret.mobi'), 'OUTSIDE');
   await symlink(join(root, 'secret.mobi'), join(kindleDir, 'news', 'news-2026-11-11.mobi'));
   await writeFile(join(kindleDir, 'top-level-2026-11-10.mobi'), 'not in a folder');
+  // A symlinked *directory* pointing outside the Kindle dir.
+  await mkdir(join(root, 'outside'), { recursive: true });
+  await writeFile(join(root, 'outside', 'evil-2026-11-10.mobi'), 'OUTSIDE-DIR');
+  await symlink(join(root, 'outside'), join(kindleDir, 'evil'));
+  // A long (but valid) slug: Fastify's default 100-char param limit must not break its link.
+  const longSlug = 'l'.repeat(66);
+  await mkdir(join(kindleDir, longSlug), { recursive: true });
+  await writeFile(join(kindleDir, longSlug, `${longSlug}-2026-11-10.mobi`), 'LONG');
 
   app = buildKindleServer({ kindleDir, logger: false });
   await app.ready();
@@ -84,6 +92,17 @@ describe('Kindle page: downloads', () => {
     expect(res.headers['content-type']).toBe(MOBI_TYPE);
   });
 
+  it('serves an issue whose folder slug is long (past Fastify default param limit)', async () => {
+    const s = 'l'.repeat(66);
+    const res = await app.inject(`/issues/${s}/${s}-2026-11-10.mobi`);
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toBe('LONG');
+  });
+
+  it('does not list a symlinked directory', async () => {
+    expect((await app.inject('/')).body).not.toContain('evil');
+  });
+
   const refused = [
     '/issues/news/notes.txt',
     '/issues/news/news-2026-11-10.epub',
@@ -91,6 +110,7 @@ describe('Kindle page: downloads', () => {
     '/issues/tech/news-2026-11-10.mobi', // issue of another folder
     '/issues/news/missing-2026-11-10.mobi',
     '/issues/news/..%2Fsecret.mobi',
+    '/issues/evil/evil-2026-11-10.mobi', // symlinked directory
     '/issues/news/%2e%2e%2fsecret.mobi',
     '/issues/..%2Fnews/news-2026-11-10.mobi',
     '/issues/%2e%2e/kindle/news/news-2026-11-10.mobi',

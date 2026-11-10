@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, readdir, rename, rm, stat, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
-import { safeFolderName } from '../util/folderName.js';
+import { issueSlug } from '../util/folderName.js';
 import { PermanentConversionError, runEbookConvert, writePeriodicalEpub } from './convert.js';
 import { periodicalProblems, readMobiExth } from './exth.js';
 
@@ -32,9 +32,10 @@ export const ISSUE_FILE = /^([a-z0-9-]+)-(\d{4}-\d{2}-\d{2})\.mobi$/;
  * rather than published.
  */
 export async function publishIssue(opts: PublishOptions): Promise<PublishedIssue> {
-  const slug = safeFolderName(opts.folder);
+  const slug = issueSlug(opts.folder);
   const folderDir = join(opts.kindleDir, slug);
-  const finalPath = join(folderDir, `${slug}-${opts.isoDate}.mobi`);
+  const fileName = `${slug}-${opts.isoDate}.mobi`;
+  const finalPath = join(folderDir, fileName);
   await mkdir(folderDir, { recursive: true });
 
   // Dot-prefixed, so the Kindle page can never list it.
@@ -61,7 +62,13 @@ export async function publishIssue(opts: PublishOptions): Promise<PublishedIssue
   }
 
   const bytes = (await stat(finalPath)).size;
-  await pruneIssues(folderDir, slug, opts.keepIssues);
+  // Best effort: the issue is already live, so a pruning hiccup must not turn a
+  // successful publish into a "failed" delivery.
+  try {
+    await pruneIssues(folderDir, slug, opts.keepIssues, fileName);
+  } catch (err) {
+    console.error(`[kindle] could not prune old ${slug} issues:`, err);
+  }
   return { mobiPath: finalPath, bytes };
 }
 
@@ -70,18 +77,25 @@ export async function clearWorkDir(kindleDir: string): Promise<void> {
   await rm(join(kindleDir, '.work'), { recursive: true, force: true });
 }
 
-/** Delete all but the newest `keep` issues of one folder. */
+/**
+ * Delete all but the newest `keep` issues of one folder. `protect` (the issue
+ * just published) is never deleted, even if it is older than the rest — e.g. a
+ * re-run of an old date.
+ */
 export async function pruneIssues(
   folderDir: string,
   slug: string,
   keep: number,
+  protect?: string,
 ): Promise<string[]> {
+  const kept = Number.isFinite(keep) ? Math.max(1, Math.floor(keep)) : 7;
   const issues = (await readdir(folderDir))
     .map((name) => ISSUE_FILE.exec(name))
     .filter((m): m is RegExpExecArray => m !== null && m[1] === slug)
     .sort((a, b) => b[2].localeCompare(a[2]));
   const removed: string[] = [];
-  for (const m of issues.slice(Math.max(1, keep))) {
+  for (const m of issues.slice(kept)) {
+    if (m[0] === protect) continue;
     await unlink(join(folderDir, m[0]));
     removed.push(m[0]);
   }

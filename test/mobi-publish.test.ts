@@ -6,7 +6,9 @@ import { join } from 'node:path';
 import sharp from 'sharp';
 import { buildEpub } from '../src/epub/writer.js';
 import { buildNcx } from '../src/epub/ncx.js';
-import { publishIssue, pruneIssues } from '../src/mobi/publish.js';
+import { publishIssue, pruneIssues, ISSUE_FILE } from '../src/mobi/publish.js';
+import { issueSlug } from '../src/util/folderName.js';
+import { loadEnv, resetEnvCache } from '../src/config/env.js';
 import { readMobiExth, periodicalProblems } from '../src/mobi/exth.js';
 import { PermanentConversionError } from '../src/mobi/convert.js';
 
@@ -213,5 +215,59 @@ describe('pruneIssues', () => {
     await writeFile(join(d, 'tech-2026-11-01.mobi'), 'x');
     await pruneIssues(d, 'tech', 0);
     expect(await readdir(d)).toEqual(['tech-2026-11-01.mobi']);
+  });
+
+  it('a garbage keep value (NaN) deletes nothing instead of everything', async () => {
+    const d = join(dir, 'prune3', 'tech');
+    await mkdir(d, { recursive: true });
+    for (const day of ['01', '02', '03']) await writeFile(join(d, `tech-2026-11-${day}.mobi`), 'x');
+    expect(await pruneIssues(d, 'tech', Number.NaN)).toEqual([]);
+  });
+
+  it('never deletes the issue just published, even when it is the oldest', async () => {
+    const d = join(dir, 'prune4', 'tech');
+    await mkdir(d, { recursive: true });
+    for (const day of ['05', '06', '07']) await writeFile(join(d, `tech-2026-11-${day}.mobi`), 'x');
+    await writeFile(join(d, 'tech-2026-10-01.mobi'), 'x'); // a re-run of an old date
+    const removed = await pruneIssues(d, 'tech', 2, 'tech-2026-10-01.mobi');
+    expect(removed).toEqual(['tech-2026-11-05.mobi']);
+    expect(await readdir(d)).toContain('tech-2026-10-01.mobi');
+  });
+});
+
+describe('issueSlug', () => {
+  it('leaves ordinary names alone', () => {
+    expect(issueSlug('News')).toBe('news');
+    expect(issueSlug('Tech & AI')).toBe('tech-ai');
+  });
+
+  it('keeps lossy names apart with a hash, and stays inside the filename pattern', () => {
+    const a = issueSlug('日本');
+    const b = issueSlug('中国');
+    expect(a).not.toBe(b);
+    for (const s of [a, b, issueSlug('!!!'), issueSlug('x'.repeat(200))]) {
+      expect(`${s}-2026-11-10.mobi`).toMatch(ISSUE_FILE);
+      expect(s.length).toBeLessThanOrEqual(70);
+    }
+  });
+});
+
+describe('env validation', () => {
+  it('falls back to defaults for typos instead of NaN', async () => {
+    process.env.KINDLE_KEEP_ISSUES = 'abc';
+    process.env.CONVERT_TIMEOUT_MS = '-5';
+    process.env.KINDLE_PORT = 'x';
+    resetEnvCache();
+    const env = loadEnv();
+    expect(env.kindleKeepIssues).toBe(7);
+    expect(env.convertTimeoutMs).toBe(20 * 60 * 1000);
+    expect(env.kindlePort).toBe(3100);
+    process.env.KINDLE_PORT = '0';
+    resetEnvCache();
+    expect(loadEnv().kindlePort).toBe(0); // 0 = disabled is a valid value
+    delete process.env.KINDLE_KEEP_ISSUES;
+    delete process.env.CONVERT_TIMEOUT_MS;
+    delete process.env.KINDLE_PORT;
+    resetEnvCache();
   });
 });
