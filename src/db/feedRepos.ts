@@ -1,4 +1,4 @@
-import type { DB } from './schema.js';
+import { OWNER_USER_ID, type DB } from './schema.js';
 import { textLength } from '../util/html.js';
 import type { NormalizedArticle } from '../reader/types.js';
 import type { TemplateId } from '../cover/hash.js';
@@ -24,12 +24,15 @@ function rowToFolderSettings(row: Record<string, unknown>): FolderSettings {
 }
 
 export class FolderSettingsRepo {
-  constructor(private db: DB) {}
+  constructor(
+    private db: DB,
+    private userId: number = OWNER_USER_ID,
+  ) {}
 
   get(folder: string): FolderSettings {
     const row = this.db
-      .prepare('SELECT * FROM folder_settings WHERE folder = ?')
-      .get(folder) as Record<string, unknown> | undefined;
+      .prepare('SELECT * FROM folder_settings WHERE user_id = ? AND folder = ?')
+      .get(this.userId, folder) as Record<string, unknown> | undefined;
     if (!row) return { folder, cadence: 'daily', deliveryDay: 0, coverTemplate: null, coverTheme: 'dark' };
     return rowToFolderSettings(row);
   }
@@ -37,30 +40,30 @@ export class FolderSettingsRepo {
   set(folder: string, cadence: 'daily' | 'weekly', deliveryDay: number): void {
     this.db
       .prepare(
-        `INSERT INTO folder_settings (folder, cadence, delivery_day) VALUES (?, ?, ?)
-         ON CONFLICT(folder) DO UPDATE SET
+        `INSERT INTO folder_settings (user_id, folder, cadence, delivery_day) VALUES (?, ?, ?, ?)
+         ON CONFLICT(user_id, folder) DO UPDATE SET
            cadence = excluded.cadence,
            delivery_day = excluded.delivery_day`,
       )
-      .run(folder, cadence, deliveryDay);
+      .run(this.userId, folder, cadence, deliveryDay);
   }
 
   setCover(folder: string, coverTemplate: TemplateId | null, coverTheme: 'light' | 'dark'): void {
     this.db
       .prepare(
-        `INSERT INTO folder_settings (folder, cadence, delivery_day, cover_template, cover_theme)
-         VALUES (?, 'daily', 0, ?, ?)
-         ON CONFLICT(folder) DO UPDATE SET
+        `INSERT INTO folder_settings (user_id, folder, cadence, delivery_day, cover_template, cover_theme)
+         VALUES (?, ?, 'daily', 0, ?, ?)
+         ON CONFLICT(user_id, folder) DO UPDATE SET
            cover_template = excluded.cover_template,
            cover_theme = excluded.cover_theme`,
       )
-      .run(folder, coverTemplate, coverTheme);
+      .run(this.userId, folder, coverTemplate, coverTheme);
   }
 
   allAsMap(): Map<string, FolderSettings> {
     const rows = this.db
-      .prepare('SELECT * FROM folder_settings')
-      .all() as Record<string, unknown>[];
+      .prepare('SELECT * FROM folder_settings WHERE user_id = ?')
+      .all(this.userId) as Record<string, unknown>[];
     const map = new Map<string, FolderSettings>();
     for (const r of rows) {
       map.set(r.folder as string, rowToFolderSettings(r));
@@ -70,8 +73,8 @@ export class FolderSettingsRepo {
 
   renameFolder(oldName: string, newName: string): void {
     this.db
-      .prepare('UPDATE folder_settings SET folder = ? WHERE folder = ?')
-      .run(newName, oldName);
+      .prepare('UPDATE folder_settings SET folder = ? WHERE user_id = ? AND folder = ?')
+      .run(newName, this.userId, oldName);
   }
 }
 
@@ -100,24 +103,31 @@ function mapFeed(row: Record<string, unknown>): Feed {
 }
 
 export class FeedRepo {
-  constructor(private db: DB) {}
+  constructor(
+    private db: DB,
+    readonly userId: number = OWNER_USER_ID,
+  ) {}
 
   add(url: string, title: string, folder: string): Feed {
     const now = Date.now();
     const info = this.db
-      .prepare('INSERT INTO feeds (url, title, folder, created_at) VALUES (?, ?, ?, ?)')
-      .run(url, title, folder, now);
+      .prepare('INSERT INTO feeds (user_id, url, title, folder, created_at) VALUES (?, ?, ?, ?, ?)')
+      .run(this.userId, url, title, folder, now);
     return { id: Number(info.lastInsertRowid), url, title, folder, createdAt: now };
   }
 
   all(): Feed[] {
     return (
-      this.db.prepare('SELECT * FROM feeds ORDER BY folder, title').all() as Record<string, unknown>[]
+      this.db
+        .prepare('SELECT * FROM feeds WHERE user_id = ? ORDER BY folder, title')
+        .all(this.userId) as Record<string, unknown>[]
     ).map(mapFeed);
   }
 
   get(id: number): Feed | undefined {
-    const row = this.db.prepare('SELECT * FROM feeds WHERE id = ?').get(id) as
+    const row = this.db
+      .prepare('SELECT * FROM feeds WHERE id = ? AND user_id = ?')
+      .get(id, this.userId) as
       | Record<string, unknown>
       | undefined;
     return row ? mapFeed(row) : undefined;
@@ -125,31 +135,37 @@ export class FeedRepo {
 
   folders(): string[] {
     const rows = this.db
-      .prepare('SELECT DISTINCT folder FROM feeds ORDER BY folder')
-      .all() as { folder: string }[];
+      .prepare('SELECT DISTINCT folder FROM feeds WHERE user_id = ? ORDER BY folder')
+      .all(this.userId) as { folder: string }[];
     return rows.map((r) => r.folder);
   }
 
   setTitle(id: number, title: string): void {
-    this.db.prepare('UPDATE feeds SET title = ? WHERE id = ?').run(title, id);
+    this.db
+      .prepare('UPDATE feeds SET title = ? WHERE id = ? AND user_id = ?')
+      .run(title, id, this.userId);
   }
 
   setFetched(id: number, error?: string): void {
     this.db
-      .prepare('UPDATE feeds SET last_fetched_at = ?, last_error = ? WHERE id = ?')
-      .run(Date.now(), error ?? null, id);
+      .prepare('UPDATE feeds SET last_fetched_at = ?, last_error = ? WHERE id = ? AND user_id = ?')
+      .run(Date.now(), error ?? null, id, this.userId);
   }
 
   renameFolder(oldName: string, newName: string): void {
-    this.db.prepare('UPDATE feeds SET folder = ? WHERE folder = ?').run(newName, oldName);
+    this.db
+      .prepare('UPDATE feeds SET folder = ? WHERE user_id = ? AND folder = ?')
+      .run(newName, this.userId, oldName);
   }
 
   moveToFolder(id: number, folder: string): void {
-    this.db.prepare('UPDATE feeds SET folder = ? WHERE id = ?').run(folder, id);
+    this.db
+      .prepare('UPDATE feeds SET folder = ? WHERE id = ? AND user_id = ?')
+      .run(folder, id, this.userId);
   }
 
   delete(id: number): void {
-    this.db.prepare('DELETE FROM feeds WHERE id = ?').run(id);
+    this.db.prepare('DELETE FROM feeds WHERE id = ? AND user_id = ?').run(id, this.userId);
   }
 }
 
@@ -165,7 +181,10 @@ export interface ArticleInput {
 }
 
 export class ArticleRepo {
-  constructor(private db: DB) {}
+  constructor(
+    private db: DB,
+    private userId: number = OWNER_USER_ID,
+  ) {}
 
   upsert(feedId: number, items: ArticleInput[]): void {
     if (items.length === 0) return;
@@ -197,10 +216,10 @@ export class ArticleRepo {
                f.title AS feed_title, f.url AS feed_url
         FROM articles a
         JOIN feeds f ON f.id = a.feed_id
-        WHERE f.folder = ? AND COALESCE(a.published_at, a.fetched_at) >= ?
+        WHERE f.user_id = ? AND f.folder = ? AND COALESCE(a.published_at, a.fetched_at) >= ?
         ORDER BY COALESCE(a.published_at, a.fetched_at) DESC
       `)
-      .all(folder, sinceMs) as Record<string, unknown>[];
+      .all(this.userId, folder, sinceMs) as Record<string, unknown>[];
     return rows.map((r) => {
       const html = (r.content_html as string) ?? '';
       return {
@@ -219,6 +238,10 @@ export class ArticleRepo {
 
   /** Delete articles older than the given cutoff (epoch ms). */
   pruneOld(cutoffMs: number): void {
-    this.db.prepare('DELETE FROM articles WHERE fetched_at < ?').run(cutoffMs);
+    this.db
+      .prepare(
+        'DELETE FROM articles WHERE fetched_at < ? AND feed_id IN (SELECT id FROM feeds WHERE user_id = ?)',
+      )
+      .run(cutoffMs, this.userId);
   }
 }
