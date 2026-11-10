@@ -23,6 +23,7 @@ the environment only and is never printed.
 Exit code: 0 all found, 1 some missing or unusable, 2 could not connect or bad input.
 """
 import argparse
+import csv
 import email
 import email.policy
 import imaplib
@@ -42,29 +43,34 @@ class FetchError(Exception):
 
 
 def read_mapping(path: str) -> dict[str, tuple[str, str]]:
-    """message_id -> (folder, date) from `message_id,folder,date` lines."""
+    """message_id -> (folder, date) from `message_id,folder,date` CSV lines (quote a folder name that has a comma)."""
     mapping: dict[str, tuple[str, str]] = {}
-    for n, raw in enumerate(Path(path).read_text(encoding="utf-8").splitlines(), 1):
-        line = raw.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = [p.strip() for p in line.split(",")]
-        if len(parts) != 3 or not all(parts):
-            raise FetchError(f"{path} line {n}: expected message_id,folder,date")
-        message_id, folder, date = parts
-        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
-            raise FetchError(f"{path} line {n}: date {date!r} is not YYYY-MM-DD")
-        mapping[message_id] = (folder, date)
+    # utf-8-sig: a byte-order mark from a spreadsheet must not end up in the first Message-ID.
+    with open(path, encoding="utf-8-sig", newline="") as fh:
+        for row in csv.reader(fh):
+            parts = [p.strip() for p in row]
+            if not parts or not parts[0] or parts[0].startswith("#"):
+                continue
+            if len(parts) != 3 or not all(parts):
+                raise FetchError(f"{path}: expected message_id,folder,date, got {row!r}")
+            message_id, folder, date = parts
+            if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", date):
+                raise FetchError(f"{path}: date {date!r} is not YYYY-MM-DD")
+            mapping[message_id] = (folder, date)
     return mapping
 
 
 def read_ids(path: str) -> list[str]:
-    return [l.strip() for l in Path(path).read_text(encoding="utf-8").splitlines() if l.strip() and not l.startswith("#")]
+    return [
+        l.strip()
+        for l in Path(path).read_text(encoding="utf-8-sig").splitlines()
+        if l.strip() and not l.startswith("#")
+    ]
 
 
 def output_name(folder: str, date: str) -> str:
-    """<folder>-<date>.epub, with anything that is not a plain file-name character replaced."""
-    return f"{re.sub(r'[^A-Za-z0-9._-]+', '-', folder).strip('-.') or 'folder'}-{date}.epub"
+    """<folder>-<date>.epub, with anything that is not a plain file-name character replaced (letters of any script are kept)."""
+    return f"{re.sub(r'[^\w.-]+', '-', folder).strip('-.') or 'folder'}-{date}.epub"
 
 
 def search_term(message_id: str) -> str:
@@ -89,7 +95,7 @@ def find_epub(msg: EmailMessage) -> tuple[str, bytes] | None:
 def looks_like_epub(path: Path) -> bool:
     try:
         with zipfile.ZipFile(path) as z:
-            return z.namelist()[:1] == ["mimetype"] and z.read("mimetype") == b"application/epub+zip"
+            return z.namelist()[:1] == ["mimetype"] and z.read("mimetype").strip() == b"application/epub+zip"
     except (zipfile.BadZipFile, OSError, IndexError, KeyError):
         return False
 
@@ -196,7 +202,7 @@ def main(argv: list[str] | None = None) -> int:
         jobs.append((message_id, *mapping[message_id]))
 
     try:
-        conn = imaplib.IMAP4_SSL(HOST)
+        conn = imaplib.IMAP4_SSL(HOST, timeout=120)  # a stalled connection fails instead of hanging
         conn.login(user, password)
     except (imaplib.IMAP4.error, OSError) as err:
         # The message is the server's reason (e.g. "Invalid credentials"), never the password.

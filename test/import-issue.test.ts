@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { spawnSync } from 'node:child_process';
-import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises';
+import { copyFile, mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import JSZip from 'jszip';
@@ -134,6 +134,15 @@ describe('building an EPUB from a staging directory', () => {
     expect(raw.subarray(30, 38).toString()).toBe('mimetype');
     const again = await JSZip.loadAsync(raw);
     expect(Object.keys(again.files).sort()).toEqual(Object.keys(zip.files).sort());
+
+    // A symlinked file is followed, a dangling one is skipped.
+    await symlink(join(unpacked, 'OEBPS', 'content.opf'), join(unpacked, 'OEBPS', 'alias.opf'));
+    await symlink(join(unpacked, 'nowhere'), join(unpacked, 'OEBPS', 'dangling.xhtml'));
+    const linked = join(dir, 'linked.epub');
+    await zipEpubDir(unpacked, linked);
+    const names = Object.keys((await JSZip.loadAsync(await readFile(linked))).files);
+    expect(names).toContain('OEBPS/alias.opf');
+    expect(names).not.toContain('OEBPS/dangling.xhtml');
   });
 });
 
@@ -199,6 +208,16 @@ describe('command line', () => {
 });
 
 // Needs calibre's ebook-convert (it is in the Docker image).
+const noDepsFor = (db: DB, kindleDir: string): CliDeps => ({
+  kindleDir,
+  ebookConvertBin: BIN,
+  timeoutMs: 5 * 60 * 1000,
+  issues: new IssueRepo(db),
+  knownFolders: [],
+  coverSettings: () => ({ coverTemplate: null, coverTheme: 'dark' }),
+  fonts: [],
+});
+
 describe.skipIf(!hasCalibre)('importing past issues (real ebook-convert)', () => {
   const base = (db: DB, kindleDir: string) => ({
     kindleDir,
@@ -294,6 +313,33 @@ describe.skipIf(!hasCalibre)('importing past issues (real ebook-convert)', () =>
     expect(exth.updatedTitle).toBe('News');
     expect(new IssueRepo(db).list('news')[0].issueDate).toBe('2026-11-01');
     expect(await readdir(src)).not.toContain('source.epub'); // the input dir is never written to
+  }, 300_000);
+
+  it('--folder is matched to the app\'s own spelling of the folder', async () => {
+    const db = openDb(':memory:');
+    const kindleDir = join(dir, 'kindle-case');
+    const epub = join(dir, 'case.epub');
+    await fixtureEpub(epub, 'Money');
+    const lines: string[] = [];
+    const deps: CliDeps = { ...noDepsFor(db, kindleDir), knownFolders: ['Money'] };
+    expect(await runCli(['--folder', 'money', '--date', '2026-11-05', epub], deps, (l) => lines.push(l))).toBe(0);
+    expect(lines[0]).toContain('Money 2026-11-05');
+    expect(new IssueRepo(db).list('money')[0].folder).toBe('Money');
+  }, 300_000);
+
+  it('a skipped issue that is on disk but missing from the index is indexed', async () => {
+    const db = openDb(':memory:');
+    const kindleDir = join(dir, 'kindle-reindex');
+    const epub = join(dir, 'reindex.epub');
+    await fixtureEpub(epub, 'Culture');
+    const opts = { ...base(db, kindleDir), folder: 'Culture', isoDate: '2026-10-30', source: epub, force: false };
+    await importIssue(opts);
+    new IssueRepo(db).forget('culture', ['culture-2026-10-30.mobi']);
+    expect(new IssueRepo(db).all()).toEqual([]);
+    const again = await importIssue(opts);
+    expect(again.status).toBe('skipped');
+    expect(again.note).toBe('added to the index');
+    expect(new IssueRepo(db).list('culture').map((i) => i.issueDate)).toEqual(['2026-10-30']);
   }, 300_000);
 
   it('--dir imports every epub and staging dir, one line each, and a second run skips them', async () => {

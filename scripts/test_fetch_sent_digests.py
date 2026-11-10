@@ -140,6 +140,21 @@ class FetchTests(unittest.TestCase):
         with self.assertRaises(fetch.FetchError):
             fetch.search_term('<a"b@c>')
 
+    def test_mapping_survives_commas_bom_and_unicode_folders(self):
+        p = Path(self.tmp.name) / "map2.csv"
+        p.write_bytes('\ufeff<a@b>,"Tech, AI",2026-11-02\n<c@d>,Café,2026-11-03\n'.encode("utf-8"))
+        self.assertEqual(
+            fetch.read_mapping(str(p)),
+            {"<a@b>": ("Tech, AI", "2026-11-02"), "<c@d>": ("Café", "2026-11-03")},
+        )
+        self.assertEqual(fetch.output_name("Café", "2026-11-03"), "Café-2026-11-03.epub")
+
+    def test_epub_with_trailing_newline_in_mimetype_is_accepted(self):
+        p = Path(self.tmp.name) / "nl.epub"
+        with zipfile.ZipFile(p, "w") as z:
+            z.writestr("mimetype", "application/epub+zip\n", compress_type=zipfile.ZIP_STORED)
+        self.assertTrue(fetch.looks_like_epub(p))
+
     def test_mapping_file(self):
         p = Path(self.tmp.name) / "map.csv"
         p.write_text("# comment\n<a@b>,Money,2026-11-02\n\n<c@d>,News,2026-11-08\n")
@@ -173,6 +188,20 @@ class MainTests(unittest.TestCase):
 
 
 class LatestSentTests(unittest.TestCase):
+    def test_output_round_trips_through_the_fetch_script_even_with_commas(self):
+        with tempfile.TemporaryDirectory() as d:
+            db = Path(d) / "x.sqlite"
+            con = sqlite3.connect(db)
+            con.execute("CREATE TABLE delivery (id INTEGER PRIMARY KEY, digest_date TEXT, folder TEXT, state TEXT, message_id TEXT)")
+            con.execute("INSERT INTO delivery (digest_date, folder, state, message_id) VALUES ('2026-11-03','Tech, AI','sent','<c,d@h>')")
+            con.commit()
+            con.close()
+            out = io.StringIO()
+            with redirect_stdout(out):
+                self.assertEqual(latest.main([str(db)]), 0)
+            (Path(d) / "map.csv").write_text(out.getvalue(), encoding="utf-8")
+            self.assertEqual(fetch.read_mapping(str(Path(d) / "map.csv")), {"<c,d@h>": ("Tech, AI", "2026-11-03")})
+
     def test_newest_per_folder_sent_only(self):
         with tempfile.TemporaryDirectory() as d:
             db = Path(d) / "x.sqlite"

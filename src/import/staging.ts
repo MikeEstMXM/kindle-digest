@@ -38,8 +38,11 @@ export async function zipEpubDir(dir: string, destEpub: string): Promise<void> {
   const walk = async (rel: string): Promise<void> => {
     for (const entry of await readdir(join(dir, rel), { withFileTypes: true })) {
       const path = rel ? `${rel}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) await walk(path);
-      else if (entry.isFile() && path !== 'mimetype') zip.file(path, await readFile(join(dir, path)));
+      // Links are followed, like any tool that zips a directory would.
+      const kind = entry.isSymbolicLink() ? await stat(join(dir, path)).catch(() => undefined) : entry;
+      if (!kind) continue; // a dangling link
+      if (kind.isDirectory()) await walk(path);
+      else if (kind.isFile() && path !== 'mimetype') zip.file(path, await readFile(join(dir, path)));
     }
   };
   await walk('');

@@ -60,7 +60,25 @@ export async function importIssue(opts: ImportOptions): Promise<ImportResult> {
   // The file on disk is the truth; the index is rebuilt from it.
   const existing = await lstat(finalPath).catch(() => undefined);
   if (existing?.isFile() && !opts.force) {
-    return { status: 'skipped', fileName, bytes: existing.size };
+    // Nothing is converted, but an issue that is on disk and missing from the
+    // index (copied in by hand, or a crash between the rename and the record)
+    // would stay invisible until the next app restart, so index it now.
+    const indexed = opts.issues.find(slug, fileName);
+    if (!indexed || indexed.bytes !== existing.size) {
+      opts.issues.record({
+        slug,
+        folder,
+        issueDate: opts.isoDate,
+        fileName,
+        bytes: existing.size,
+      });
+    }
+    return {
+      status: 'skipped',
+      fileName,
+      bytes: existing.size,
+      note: indexed && indexed.bytes === existing.size ? undefined : 'added to the index',
+    };
   }
 
   const src = await stat(opts.source).catch(() => undefined);

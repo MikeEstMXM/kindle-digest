@@ -44,7 +44,9 @@ const mb = (n: number): string => `${(n / 1024 / 1024).toFixed(1)} MB`;
 
 function describe(job: Job, r: ImportResult): string {
   const what = `${job.folder} ${job.isoDate}`;
-  if (r.status === 'skipped') return `skipped   ${what}  ${r.fileName} already exists (use --force to replace)`;
+  if (r.status === 'skipped') {
+    return `skipped   ${what}  ${r.fileName} already exists (use --force to replace)${r.note ? `  [${r.note}]` : ''}`;
+  }
   return `${r.status.padEnd(9)} ${what}  ${r.fileName} ${mb(r.bytes)}${r.note ? `  [${r.note}]` : ''}`;
 }
 
@@ -130,8 +132,16 @@ export async function runCli(
       out(`Need --folder, --date and exactly one path.\n${USAGE}`);
       return 2;
     }
+    // The app's own spelling of the folder wins ("money" -> "Money"): it is what
+    // /issues shows and what the cover settings are keyed by.
+    const known = new Map(deps.knownFolders.map((f) => [issueSlug(f), f]));
     jobs = [
-      { folder: values.folder, isoDate: values.date, source: positionals[0], label: positionals[0] },
+      {
+        folder: known.get(issueSlug(values.folder)) ?? values.folder,
+        isoDate: values.date,
+        source: positionals[0],
+        label: positionals[0],
+      },
     ];
   }
 

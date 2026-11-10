@@ -118,8 +118,11 @@ failed. A **staging directory** (what an interrupted build leaves: only
 `art-N.xhtml` pages and `images_*` files) is rebuilt into an EPUB first, with the
 contents page, sections, cover and navigation regenerated from the pages; missing
 pages or pictures are reported on the line and left out cleanly. `--dir` takes the
-folder's proper name ("Money") from the app's own folders. It refuses to run as
+folder's proper name ("Money") from the app's own folders (so does `--folder money`). It refuses to run as
 root against files owned by another user, and refuses to create a new database.
+If `KINDLE_KEEP_ISSUES` is set to a number, the next live delivery of that folder
+prunes the oldest issues beyond it, backfilled ones included; leave it unset
+(keep everything) to keep a backfill.
 
 **2. `scripts/fetch-sent-digests.py`** (standalone Python, stdlib only; run on the
 host, not in the app): downloads the `.epub` attachments from Gmail's Sent Mail.

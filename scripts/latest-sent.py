@@ -5,6 +5,9 @@ Reads the `delivery` table (state = 'sent') of a SQLite copy of the app's
 database, read-only, and prints one `message_id,folder,date` line per issue:
 the mapping file scripts/fetch-sent-digests.py takes.
 
+If the database is a copy of a live one, copy its `-wal` file next to it too
+(and `-shm`): the newest sends may still be in the WAL, and are missing without it.
+
     python3 scripts/latest-sent.py DB.sqlite                 # newest 10 per folder
     python3 scripts/latest-sent.py DB.sqlite --limit 5
     python3 scripts/latest-sent.py DB.sqlite --ids           # only the Message-IDs
@@ -19,6 +22,7 @@ Plain SQL, if you would rather run it yourself:
     WHERE rn <= 10 ORDER BY folder, digest_date DESC;
 """
 import argparse
+import csv
 import sqlite3
 import sys
 from pathlib import Path
@@ -58,8 +62,12 @@ def main(argv: list[str] | None = None) -> int:
     except sqlite3.Error as err:
         print(f"could not read {args.db}: {err}", file=sys.stderr)
         return 1
+    writer = csv.writer(sys.stdout, lineterminator="\n")  # quotes a folder name that has a comma
     for message_id, folder, date in rows:
-        print(message_id if args.ids else f"{message_id},{folder},{date}")
+        if args.ids:
+            print(message_id)
+        else:
+            writer.writerow([message_id, folder, date])
     return 0
 
 
