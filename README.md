@@ -16,28 +16,59 @@ SQLite database on your Fly.io volume.
 Pick one under **Settings → Delivery mode** (or the `DELIVERY_MODE` env var for
 the first-run default).
 
-| | **Kindle page** (`download`, the default) | **Email** (`email`) |
+| | **Download** (`download`, the default) | **Email** (`email`) |
 |---|---|---|
 | What is delivered | A Kindle *periodical* `.mobi`, one per folder per day | The EPUB, by SMTP to your `@kindle.com` address |
 | Issues stack under one title with a cover tile | **Yes** | No — Amazon turns every attachment into an ordinary document |
 | Needs SMTP | **No — never touches it** | Yes (and the whitelist step below) |
-| How it reaches the Kindle | You open the Kindle page in the Kindle's web browser and tap an issue | Amazon delivers it |
+| How it reaches the Kindle | You sign in on the Kindle's web browser, open **Issues** and tap one | Amazon delivers it |
 | Needs calibre | Yes (in the Docker image) | No |
 
-### The Kindle page
+### Signing in
 
-A second, separate web server (default port **3100**, `KINDLE_PORT`) that lists
-every folder's issues, newest first, as large tap targets. On the Kindle:
-**Experimental Browser → `http://<server-ip>:3100/`** → tap an issue → it downloads
-into the library and stacks with earlier issues of the same folder.
+The app has its own login, so it can be public on the internet (no Cloudflare
+Access needed). There is one account, **`mharm`**; there is no sign-up page.
 
-- It serves **only** the issue list and the `.mobi` files — nothing of the
-  dashboard is reachable on that port. It has **no login** (the Kindle browser
-  can't pass Cloudflare Access), so publish that port on the **home network
-  only**, never to the internet. The main app (port 3000) has no login either,
-  so keep it behind your access gateway.
-- The last 7 issues per folder are kept (`KINDLE_KEEP_ISSUES`); older ones are
-  deleted when a new one is published.
+- **First run.** The account starts with no password. Open `/setup`, choose a
+  password (at least 12 characters, typed twice) and you're done: `/setup` then
+  returns **404 forever**. The password is typed into the page by you; it never
+  goes through an environment variable or anyone else. **Keep Cloudflare Access
+  on until you have done this**, so only you can reach `/setup` (whoever submits
+  it first sets the password).
+- **Signing in.** `/login` is a plain HTML form with no JavaScript, so it works in
+  the Kindle's Experimental Browser. Tick **Keep me signed in** on the Kindle for
+  a one-year session; otherwise a session lasts 30 days. Sessions live in the
+  database; the cookie is `HttpOnly; Secure; SameSite=Lax`. **Sign out** is in the
+  top bar.
+- **Changing the password** is on the **Settings** page and needs the current
+  password. It signs every other device out.
+- **Everything else needs a session**: any request without one is redirected to
+  `/login?next=…`. The only open paths are `/login`, `/setup` (until a password
+  exists), `/healthz` and the htmx script.
+- **Forms are CSRF-protected** with a hidden token (no JavaScript needed).
+- **Failed sign-ins are rate-limited**: 5 per 15 minutes per address (the
+  `CF-Connecting-IP` header when Cloudflare sends one, else the connection's own
+  address), and every failure is logged.
+- **Forgot the password?** Clear it from the host, then visit `/setup` again
+  (this keeps all your data):
+  `sqlite3 <database file> "UPDATE users SET password_hash = NULL WHERE username = 'mharm'; DELETE FROM sessions;"`.
+  Do this only while Cloudflare Access is on, for the same reason as above.
+
+### The issue archive
+
+**Issues** in the top bar (`/issues`) lists each folder with its latest issue and
+how many there are; a folder's page lists **every** issue, newest first, with
+the date, size, a small cover and a big **Download** button. On the Kindle:
+**Experimental Browser → `https://digest.g1zoolu.com/issues`** → tap **Download** → it lands
+in the library and stacks with earlier issues of the same folder. Downloads are
+served as `application/x-mobipocket-ebook` attachments. The pages are plain HTML
+with large tap targets and no JavaScript.
+
+- Every issue is kept (`KINDLE_KEEP_ISSUES` unset or `0`); set it to a number to
+  keep only that many per folder.
+- The issue list is an index in the database (so it knows which user owns what).
+  At startup it is brought in line with the files in `KINDLE_DIR`, so issues from
+  before the archive existed appear on their own.
 - Each issue is made by converting the built EPUB with
   [calibre](https://calibre-ebook.com)'s `ebook-convert` as a separate process:
   the OPF is switched to version 2.0 with a `periodical:magazine:<Folder>` type and
@@ -84,7 +115,7 @@ RSS/Atom feeds (fetched hourly) ──► articles grouped by folder
        ┌──────────────┴───────────────┐
   download mode                   email mode
   calibre → periodical .mobi      SMTP ──► your @kindle.com address
-  → Kindle page (port 3100)             │
+  → Issue archive (/issues, login)      │
        └──────────────┬───────────────┘
                       │
          delivery marked published / sent
@@ -146,14 +177,18 @@ Copy `.env.example` to `.env` and set:
 | `ALERT_EMAIL` | – | Where delivery-failure alerts go. Defaults to `SMTP_FROM`. |
 | `DELIVERY_MAX_ATTEMPTS` | – | Retries before a delivery is marked failed and alerted. Default `5`. |
 | `BUILD_CONCURRENCY` | – | Articles fetched/rendered in parallel. Default `4`. Trades peak memory for build speed — lower it to `2` if builds run hot on a 512 MB VM. |
-| `DELIVERY_MODE` | – | `download` (default: Kindle page, no email) or `email`. First-run default only; the Settings page choice (stored in the DB) wins. Anything else means `download`. |
-| `KINDLE_PORT` | – | Port of the separate, login-free Kindle page. Default `3100`; `0` turns it off. |
-| `KINDLE_DIR` | – | Where published `.mobi` issues live (the Kindle page can see nothing else). Default `./data/kindle`; `/data/kindle` in Docker (on the volume). |
-| `KINDLE_KEEP_ISSUES` | – | Issues kept per folder. Default `7`. |
+| `DELIVERY_MODE` | – | `download` (default: issue archive, no email) or `email`. First-run default only; the Settings page choice (stored in the DB) wins. Anything else means `download`. |
+| `KINDLE_DIR` | – | Where published `.mobi` issues live (the only files `/issues` can serve). Default `./data/kindle`; `/data/kindle` in Docker (on the volume). |
+| `KINDLE_KEEP_ISSUES` | – | Issues kept per folder. **Unset or `0` keeps every issue** (the default). A positive number keeps only the newest N. |
+| `SESSION_SECRET` | – | Any long random string. Signs the one-time tokens on the login and setup forms. If unset a random one is made at startup, which only means a login page left open across a restart needs a reload. Logged-in sessions do not depend on it. |
 | `EBOOK_CONVERT_BIN` | – | calibre's `ebook-convert`. Default: found on `PATH` (`/opt/calibre` in the image). |
 | `CONVERT_TIMEOUT_MS` | – | Kill a conversion after this long. Default `1200000` (20 min). A 34 MB EPUB converts in about 35 s. |
 
-No OAuth tokens or encryption keys are required.
+No OAuth tokens or encryption keys are required. The login password is never an
+environment variable: it is set at `/setup` and stored only as a scrypt hash.
+
+`KINDLE_PORT` no longer exists (the separate Kindle listener was removed); it is
+ignored if it is still set.
 
 ---
 
@@ -173,11 +208,12 @@ No OAuth tokens or encryption keys are required.
 ## Running the Docker image (home server)
 
 ```bash
-# Dashboard on localhost (put it behind your access gateway);
-# Kindle page on the LAN address only (it has no login).
+# One port. Put TLS (Cloudflare tunnel, reverse proxy) in front of it:
+# the session cookie is Secure, so sign-in needs https (or localhost).
 docker build -t kindle-digest .
 docker run -d --name kindle-digest -v kindle-digest-data:/data \
-  -p 127.0.0.1:3000:3000 -p 192.168.1.x:3100:3100 kindle-digest
+  -e SESSION_SECRET=<long random string> \
+  -p 127.0.0.1:3000:3000 kindle-digest
 ```
 
 The image bundles calibre (pinned by the `CALIBRE_VERSION` build arg) for the
@@ -187,7 +223,7 @@ are not needed in the default `download` mode.
 
 ## Deploy to Fly.io
 
-> The Fly deployment predates the Kindle page and is being retired. The image
+> The Fly deployment predates the issue archive and is being retired. The image
 > now contains calibre and `download` is the default mode, so a Fly deploy would
 > stop emailing unless `DELIVERY_MODE=email` is set (and a 512 MB VM is tight for
 > conversions). Fly deploys remain manual.
