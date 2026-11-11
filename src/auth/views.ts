@@ -25,6 +25,23 @@ ${o.notice ? `<div class="msg">${escapeHtml(o.notice)}</div>` : ''}${o.error ? `
   );
 }
 
+/**
+ * Shown after a successful sign-in instead of a 302. The Kindle's old WebKit
+ * browser does not keep a cookie that arrives on a redirect response, so the
+ * cookie is set on this ordinary 200 page and the browser moves on from here.
+ * The refresh needs no JavaScript; the link is for a browser that ignores it.
+ */
+export function signedInPage(next: string): string {
+  const url = escapeHtml(next);
+  return `<!DOCTYPE html>
+<html lang="en"><head><meta charset="utf-8"><meta http-equiv="refresh" content="0;url=${url}">
+<title>Signed in — Kindle Digest</title></head>
+<body style="font-family: Georgia, serif; font-size: 22px; padding: 12px;">
+<h1>Signed in</h1>
+<p><a href="${url}">Signed in, continue</a></p>
+</body></html>`;
+}
+
 export function setupPage(o: { formToken: string; error?: string }): string {
   return simplePage(
     'Set a password',
