@@ -94,6 +94,18 @@ on every login. A password change ends every other session. `Secure` is always
 on: the app must be reached over https (curl and browsers also accept
 `localhost`).
 
+**Login answers 200, not 302 (Kindle).** From the Kindle (11th gen, Experimental
+Browser) a successful `POST /login` was followed by a bounce back to `/login`:
+the browser did not keep a cookie set on the 302. The cookie is now set on a 200
+page with `<meta http-equiv="refresh" content="0;url=NEXT">` and a visible
+"Signed in, continue" link; `NEXT` still goes through `safeNext` and is HTML-escaped.
+Attributes were left alone on purpose (`HttpOnly; Secure; SameSite=Lax`, Max-Age +
+Expires). Each gate redirect logs `gate redirect to login` with an 8-hex hash of
+the Cookie header, whether `kd_session` was sent and found, and the user-agent
+(never the token), so a failed Kindle attempt shows whether the cookie came back.
+If the Kindle still fails, the next candidates are dropping `SameSite` or sending
+`Max-Age` only; both weaken other browsers slightly and need the owner's say-so.
+
 **The gate** is one global `onRequest` hook with a four-entry allow-list
 (`/login`, `/setup`, `/healthz`, the htmx script), so a route added later is
 protected by default. Unknown URLs also redirect to login rather than revealing

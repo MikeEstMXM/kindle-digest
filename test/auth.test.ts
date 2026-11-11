@@ -25,6 +25,17 @@ import {
 const DAY = 24 * 60 * 60 * 1000;
 const FORM = { 'content-type': 'application/x-www-form-urlencoded' };
 
+/** Where the sign-in page's meta refresh sends the browser, decoded the way a browser would. */
+function refreshTarget(html: string): string | undefined {
+  const m = /<meta http-equiv="refresh" content="0;url=([^"]*)">/.exec(html);
+  return m?.[1]
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
+}
+
 let t: TestApp;
 beforeEach(() => {
   t = makeApp();
@@ -200,7 +211,7 @@ describe('/setup', () => {
     const again = await submit('another long password'); // a still-valid token changes nothing
     expect(again.statusCode).toBe(404);
     // ...and it did not replace the password.
-    expect((await login(t)).statusCode).toBe(302);
+    expect((await login(t)).statusCode).toBe(200);
   });
 
   it('stores a salted scrypt hash, never the password', async () => {
@@ -255,8 +266,13 @@ describe('/login', () => {
 
   it('a plain form POST signs in and sets a hardened session cookie', async () => {
     const res = await login(t);
-    expect(res.statusCode).toBe(302);
-    expect(res.headers.location).toBe('/');
+    // 200 with a refresh, not a 302: the Kindle browser drops a cookie set on a redirect.
+    expect(res.statusCode).toBe(200);
+    expect(res.headers.location).toBeUndefined();
+    expect(res.headers['content-type']).toMatch(/text\/html/);
+    expect(res.headers['cache-control']).toContain('no-store');
+    expect(refreshTarget(res.body)).toBe('/');
+    expect(res.body).toContain('<a href="/">Signed in, continue</a>');
     const set = String(res.headers['set-cookie']);
     expect(set).toMatch(/^kd_session=[\w-]{40,};/);
     for (const attr of ['HttpOnly', 'Secure', 'SameSite=Lax', 'Path=/'])
@@ -332,9 +348,9 @@ describe('/login', () => {
   });
 
   it('goes back to where you were headed, but never off-site', async () => {
-    const via = async (dest: string) => (await login(t, { next: dest })).headers.location;
+    const via = async (dest: string) => refreshTarget((await login(t, { next: dest })).body);
     expect(await via('/issues/news')).toBe('/issues/news');
-    expect(await via('/feeds?x=1')).toBe('/feeds?x=1');
+    expect(await via('/feeds?x=1&y=2')).toBe('/feeds?x=1&y=2');
     for (const evil of [
       'https://evil.example/',
       '//evil.example',
@@ -352,9 +368,10 @@ describe('/login', () => {
     const hostile = ['/€', '/\u007f', '/\u2028', '/a\u0000b', '/ü?x=ß', '/%E2%82%AC'];
     for (const next of hostile) {
       const res = await login(t, { next });
-      expect(res.statusCode, JSON.stringify(next)).toBe(302);
-      expect(res.headers.location).toMatch(/^\/[\x21-\x7e]*$/); // always a plain-ASCII path
-      if (!/%/.test(next)) expect(res.headers.location).toBe('/');
+      expect(res.statusCode, JSON.stringify(next)).toBe(200);
+      const target = refreshTarget(res.body);
+      expect(target).toMatch(/^\/[\x21-\x7e]*$/); // always a plain-ASCII path
+      if (!/%/.test(next)) expect(target).toBe('/');
     }
     // The same through the signed-in GET /login?next=... path.
     const cookie = cookieOf(await login(t))!;
@@ -365,6 +382,46 @@ describe('/login', () => {
     }
     // ...and the app is still up.
     expect((await t.app.inject('/healthz')).statusCode).toBe(200);
+  });
+
+  it('cannot be turned into markup or an off-site refresh through ?next=', async () => {
+    for (const next of ['/"><script>alert(1)</script>', "/'onmouseover='x", '/a"b&c<d>']) {
+      const res = await login(t, { next });
+      expect(res.statusCode).toBe(200);
+      expect(res.body).not.toMatch(/<script/i);
+      // Exactly one meta tag and one link, each with an intact quoted value.
+      expect(res.body.match(/<meta /g)).toHaveLength(2); // charset + refresh
+      expect(res.body.match(/<a /g)).toHaveLength(1);
+      expect(refreshTarget(res.body)).toBe(next); // what the browser decodes is the plain path
+    }
+    for (const evil of ['https://evil.example/', '//evil.example', 'javascript:alert(1)']) {
+      expect(refreshTarget((await login(t, { next: evil })).body), evil).toBe('/');
+    }
+  });
+
+  it('logs a short hash and presence of the cookie, never the token, when the gate redirects', async () => {
+    const token = cookieOf(await login(t))!.split('=')[1];
+    t.logs.length = 0;
+    const ua = 'Mozilla/5.0 (Linux; Kindle) Silk/Test';
+    await t.app.inject({ url: '/issues', headers: { 'user-agent': ua } });
+    await t.app.inject({
+      url: '/issues',
+      headers: { 'user-agent': ua, cookie: 'kd_session=stale-token-value' },
+    });
+    await t.app.inject({
+      url: '/issues',
+      headers: { cookie: `kd_session=${token}`, 'user-agent': ua },
+    }); // signed in: no redirect, no line
+    const lines = t.logs
+      .map((l) => JSON.parse(l))
+      .filter((l) => l.msg === 'gate redirect to login');
+    expect(lines).toHaveLength(2);
+    expect(lines[0]).toMatchObject({ cookieHash: 'none', hasSessionCookie: false, ua });
+    expect(lines[1]).toMatchObject({ hasSessionCookie: true, sessionFound: false, ua });
+    expect(lines[1].cookieHash).toMatch(/^[0-9a-f]{8}$/);
+    const everything = t.logs.join('\n');
+    expect(everything).not.toContain(token);
+    expect(everything).not.toContain('stale-token-value');
   });
 
   it('replaces any session id sent in with a fresh one', async () => {
@@ -427,7 +484,7 @@ describe('login rate limit', () => {
     for (let i = 0; i < MAX_LOGIN_FAILURES; i++)
       await login(t, { password: 'wrong wrong wrong', ip: '203.0.113.7' });
     expect((await login(t, { ip: '203.0.113.7' })).statusCode).toBe(429);
-    expect((await login(t, { ip: '198.51.100.9' })).statusCode).toBe(302);
+    expect((await login(t, { ip: '198.51.100.9' })).statusCode).toBe(200);
   });
 
   it('falls back to the socket address, and ignores a junk CF header', async () => {
@@ -455,20 +512,20 @@ describe('login rate limit', () => {
       await login(t, { password: 'wrong wrong wrong', ip: `2001:db8:1:2::${i + 1}` });
     }
     expect((await login(t, { ip: '2001:db8:1:2:aaaa:bbbb:cccc:dddd' })).statusCode).toBe(429);
-    expect((await login(t, { ip: '2001:db8:1:3::1' })).statusCode).toBe(302); // a different /64
+    expect((await login(t, { ip: '2001:db8:1:3::1' })).statusCode).toBe(200); // a different /64
   });
 
   it('lets the address try again once the window has passed', async () => {
     for (let i = 0; i < MAX_LOGIN_FAILURES; i++) await login(t, { password: 'wrong wrong wrong' });
     expect((await login(t)).statusCode).toBe(429);
     t.clock.now += LOGIN_WINDOW_MS + 1000;
-    expect((await login(t)).statusCode).toBe(302);
+    expect((await login(t)).statusCode).toBe(200);
   });
 
   it('a successful sign-in clears the count', async () => {
     for (let i = 0; i < MAX_LOGIN_FAILURES - 1; i++)
       await login(t, { password: 'wrong wrong wrong' });
-    expect((await login(t)).statusCode).toBe(302);
+    expect((await login(t)).statusCode).toBe(200);
     for (let i = 0; i < MAX_LOGIN_FAILURES - 1; i++) {
       expect((await login(t, { password: 'wrong wrong wrong' })).statusCode).toBe(401);
     }
@@ -506,7 +563,7 @@ describe('CSRF protection', () => {
   it('rejects a state-changing POST with no token, a wrong token, or a token from another session', async () => {
     const a = await signIn(t);
     const b = await login(t); // a second session with its own token
-    expect(b.statusCode).toBe(302);
+    expect(b.statusCode).toBe(200);
     const attempts = [
       a.post('/settings', { timezone: 'UTC' }, false),
       a.post('/settings', { timezone: 'UTC', _csrf: 'wrong' }, false),
@@ -593,7 +650,7 @@ describe('change password (Settings)', () => {
       confirm: 'brand new password',
     });
     expect(bad.headers.location).toBe('/settings?pw=wrong#password');
-    expect((await login(t)).statusCode).toBe(302); // old password still works
+    expect((await login(t)).statusCode).toBe(200); // old password still works
   });
 
   it('validates the new one', async () => {
@@ -623,7 +680,7 @@ describe('change password (Settings)', () => {
       302,
     );
     expect((await login(t, { password: PASSWORD })).statusCode).toBe(401);
-    expect((await login(t, { password: 'brand new password' })).statusCode).toBe(302);
+    expect((await login(t, { password: 'brand new password' })).statusCode).toBe(200);
   });
 
   it('counts wrong current passwords toward the rate limit', async () => {

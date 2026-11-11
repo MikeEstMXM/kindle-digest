@@ -11,7 +11,7 @@ import {
 } from './password.js';
 import { clientIp, rateKey } from './ip.js';
 import { AuthRepo } from './store.js';
-import { loginPage, setupPage } from './views.js';
+import { loginPage, setupPage, signedInPage } from './views.js';
 
 /**
  * Login for the whole app.
@@ -130,6 +130,22 @@ export function registerAuth(
       req.session = { token, userId: found.userId, csrf: found.csrfToken };
       return;
     }
+
+    // Lets a browser that keeps getting bounced prove whether its cookie came
+    // back: a short hash of the Cookie header (never the header or token itself).
+    const rawCookie = req.headers.cookie;
+    req.log.info(
+      {
+        path: req.url.split('?')[0],
+        cookieHash: rawCookie
+          ? createHash('sha256').update(rawCookie).digest('hex').slice(0, 8)
+          : 'none',
+        hasSessionCookie: !!token,
+        sessionFound: !!found,
+        ua: str(req.headers['user-agent']).slice(0, 200),
+      },
+      'gate redirect to login',
+    );
 
     const readOnly = req.method === 'GET' || req.method === 'HEAD';
     const dest = readOnly ? `/login?next=${encodeURIComponent(safeNext(req.url))}` : '/login';
@@ -293,9 +309,11 @@ export function registerAuth(
     repo.clearFailures(rateKey(ip));
     housekeeping();
     req.log.info({ ip, remember }, 'login ok');
+    // 200 + refresh, not a 302: the Kindle browser drops a cookie set on a redirect.
     return reply
       .header('Set-Cookie', cookieHeader(sessionToken, Math.floor(lifetimeMs / 1000)))
-      .redirect(next);
+      .type('text/html; charset=utf-8')
+      .send(signedInPage(next));
   });
 
   // 404 — not a redirect, not a hint — as soon as a password exists.

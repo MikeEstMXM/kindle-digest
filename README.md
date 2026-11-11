@@ -38,8 +38,10 @@ Access needed). There is one account, **`mharm`**; there is no sign-up page.
 - **Signing in.** `/login` is a plain HTML form with no JavaScript, so it works in
   the Kindle's Experimental Browser. Tick **Keep me signed in** on the Kindle for
   a one-year session; otherwise a session lasts 30 days. Sessions live in the
-  database; the cookie is `HttpOnly; Secure; SameSite=Lax`. **Sign out** is in the
-  top bar.
+  database; the cookie is `HttpOnly; Secure; SameSite=Lax`. Signing in answers
+  with a small "Signed in, continue" page that refreshes to where you were going
+  (not a redirect: the Kindle browser drops a cookie set on a redirect). **Sign
+  out** is in the top bar.
 - **Changing the password** is on the **Settings** page and needs the current
   password. It signs every other device out.
 - **Everything else needs a session**: any request without one is redirected to
