@@ -270,6 +270,7 @@ describe('/login', () => {
     expect(res.statusCode).toBe(200);
     expect(res.headers.location).toBeUndefined();
     expect(res.headers['content-type']).toMatch(/text\/html/);
+    expect(res.headers['cache-control']).toContain('no-store');
     expect(refreshTarget(res.body)).toBe('/');
     expect(res.body).toContain('<a href="/">Signed in, continue</a>');
     const set = String(res.headers['set-cookie']);
