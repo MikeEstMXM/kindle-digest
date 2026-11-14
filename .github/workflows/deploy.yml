@@ -1,5 +1,6 @@
 name: Deploy to Fly
 
+# Disabled: Fly.io deployments are temporarily turned off.
 # Manual only. A deploy ships straight to the live Kindle pipeline, so it never
 # happens as a side effect of a push — someone has to choose it.
 on:
@@ -17,6 +18,7 @@ concurrency:
 
 jobs:
   deploy:
+    if: ${{ false }}
     name: flyctl deploy
     runs-on: ubuntu-latest
     steps:
